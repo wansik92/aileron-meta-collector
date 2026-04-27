@@ -133,7 +133,7 @@ def install_boto3_hooks(env: str = "PROD") -> None:
             logger.debug("boto3 S3 lineage hook error", exc_info=True)
 
     for op in _S3_READ_OPS | _S3_WRITE_OPS:
-        events.register(f"before-call.s3.{op}", _handle_s3)
+        events.register(f"before-parameter-build.s3.{op}", _handle_s3)
 
     # ── Athena 훅 ──────────────────────────────────────────────────────────
     #
@@ -156,19 +156,23 @@ def install_boto3_hooks(env: str = "PROD") -> None:
             job=job,
         )
 
-    def _athena_after_start(parsed_response: dict, **kwargs):
+    def _athena_after_start(parsed_response: dict = None, parsed: dict = None, **kwargs):
+        # botocore < 1.40: parsed_response / botocore >= 1.40: parsed
+        response = parsed_response or parsed or {}
         pending = getattr(_athena_req_local, "pending", None)
         _athena_req_local.pending = None
         if not pending or not pending.sql:
             return
-        execution_id = parsed_response.get("QueryExecutionId", "")
+        execution_id = response.get("QueryExecutionId", "")
         if not execution_id:
             return
         with _pending_athena_lock:
             _pending_athena[execution_id] = pending
 
-    def _athena_after_get_execution(parsed_response: dict, **kwargs):
-        execution = parsed_response.get("QueryExecution", {})
+    def _athena_after_get_execution(parsed_response: dict = None, parsed: dict = None, **kwargs):
+        # botocore < 1.40: parsed_response / botocore >= 1.40: parsed
+        response = parsed_response or parsed or {}
+        execution = response.get("QueryExecution", {})
         state = execution.get("Status", {}).get("State", "")
         execution_id = execution.get("QueryExecutionId", "")
 
@@ -203,7 +207,9 @@ def install_boto3_hooks(env: str = "PROD") -> None:
         except Exception:
             logger.debug("Athena lineage emit error", exc_info=True)
 
-    events.register("before-call.athena.StartQueryExecution", _athena_before_start)
+    # before-parameter-build: 원본 API 파라미터(QueryString 등)가 살아있는 시점
+    # before-call: 이미 HTTP 직렬화된 이후라 QueryString 없음
+    events.register("before-parameter-build.athena.StartQueryExecution", _athena_before_start)
     events.register("after-call.athena.StartQueryExecution",  _athena_after_start)
     events.register("after-call.athena.GetQueryExecution",    _athena_after_get_execution)
 

@@ -4,10 +4,7 @@ import re
 
 import sqlparse
 from sqlparse.sql import Identifier, IdentifierList, Parenthesis
-from sqlparse.tokens import DML, Keyword
-
-_WRITE_OPS = {"INSERT", "UPDATE", "DELETE", "MERGE", "CREATE"}
-_READ_OPS = {"SELECT"}
+from sqlparse.tokens import DML, DDL, Keyword
 
 # lineage 추적 대상에서 제외할 스키마 접두사
 _SKIP_SCHEMAS = {"information_schema", "pg_catalog", "sys", "performance_schema"}
@@ -15,19 +12,36 @@ _SKIP_SCHEMAS = {"information_schema", "pg_catalog", "sys", "performance_schema"
 _RE_UNLOAD_INNER = re.compile(r"UNLOAD\s*\((.+)\)\s*TO", re.IGNORECASE | re.DOTALL)
 _RE_UNLOAD_TO    = re.compile(r"\bTO\s+['\"]?(s3://[^\s'\"]+)['\"]?", re.IGNORECASE)
 
+# CREATE TABLE <name> [WITH (...)] AS SELECT
+_RE_CTAS = re.compile(
+    r"CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)",
+    re.IGNORECASE,
+)
+# AS SELECT ... 이후 본문 추출
+_RE_CTAS_BODY = re.compile(r"\bAS\s+(SELECT\b.+)$", re.IGNORECASE | re.DOTALL)
+
+# UPDATE <table>
+_RE_UPDATE = re.compile(r"UPDATE\s+([^\s(]+)", re.IGNORECASE)
+
+# INSERT INTO <table>
+_RE_INSERT = re.compile(r"INSERT\s+(?:OVERWRITE\s+)?(?:INTO\s+)?([^\s(]+)", re.IGNORECASE)
+
 
 def extract_tables(sql: str) -> tuple[list[str], list[str]]:
     """
     Returns (input_tables, output_tables).
 
-    - SELECT → input만
-    - INSERT/UPDATE/DELETE/MERGE → 첫 테이블=output, 나머지=input
-    - CREATE TABLE ... AS SELECT → output=생성 테이블, input=SELECT 대상
-    - UNLOAD (SELECT ...) TO 's3://...' → input=SELECT 테이블, output=S3 URN
+    - SELECT                 → input만
+    - INSERT INTO / OVERWRITE→ output=대상 테이블, input=SELECT 테이블
+    - UPDATE                 → output=대상 테이블, input=FROM/JOIN 테이블
+    - CREATE TABLE … AS SELECT (CTAS) → output=생성 테이블, input=SELECT 테이블
+    - UNLOAD (SELECT …) TO 's3://…' → input=SELECT 테이블, output=__s3__ 마커
     """
     stripped = sql.strip()
+    upper = stripped.upper().lstrip()
 
-    if stripped.upper().startswith("UNLOAD"):
+    # ── UNLOAD ───────────────────────────────────────────────────────────────
+    if upper.startswith("UNLOAD"):
         return _parse_unload(stripped)
 
     parsed = sqlparse.parse(stripped)
@@ -35,57 +49,107 @@ def extract_tables(sql: str) -> tuple[list[str], list[str]]:
         return [], []
 
     stmt = parsed[0]
-    op = _get_dml_op(stmt)
-    tables = _extract_tables_from_stmt(stmt)
+    op = _get_stmt_type(stmt)
 
-    if op in _WRITE_OPS:
-        return tables[1:], tables[:1]
-    elif op in _READ_OPS:
-        return tables, []
+    # ── CTAS / CREATE EXTERNAL TABLE AS SELECT ───────────────────────────────
+    if op == "CREATE":
+        return _parse_ctas(stripped)
+
+    # ── INSERT INTO ──────────────────────────────────────────────────────────
+    if op == "INSERT":
+        return _parse_insert(stripped, stmt)
+
+    # ── UPDATE ───────────────────────────────────────────────────────────────
+    if op == "UPDATE":
+        return _parse_update(stripped, stmt)
+
+    # ── SELECT ───────────────────────────────────────────────────────────────
+    if op == "SELECT":
+        inputs = _collect_from_tables(stmt)
+        return _dedupe(inputs), []
+
     return [], []
 
 
+# ── UNLOAD ────────────────────────────────────────────────────────────────────
+
 def _parse_unload(sql: str) -> tuple[list[str], list[str]]:
-    # 내부 SELECT에서 input 테이블 추출
     inputs: list[str] = []
     inner_match = _RE_UNLOAD_INNER.search(sql)
     if inner_match:
         inner_sql = inner_match.group(1).strip()
         inputs, _ = extract_tables(inner_sql)
 
-    # TO 절 S3 경로 → output URN (env는 호출 시점에 모르므로 placeholder)
     outputs: list[str] = []
     to_match = _RE_UNLOAD_TO.search(sql)
     if to_match:
         s3_path = to_match.group(1).rstrip("/").replace("s3://", "")
-        # env는 hooks 레이어에서 주입 — 파서는 raw path만 반환
         outputs.append(f"__s3__{s3_path}")
 
     return inputs, outputs
 
 
-def _get_dml_op(stmt: sqlparse.sql.Statement) -> str:
-    for token in stmt.tokens:
-        if token.ttype is DML:
-            return token.normalized.upper()
-        if token.ttype is Keyword and token.normalized.upper() == "CREATE":
-            return "CREATE"
-    return ""
+# ── CTAS ──────────────────────────────────────────────────────────────────────
+
+def _parse_ctas(sql: str) -> tuple[list[str], list[str]]:
+    """CREATE [EXTERNAL] TABLE <name> [WITH (...)] AS SELECT ..."""
+    output_table = ""
+    m = _RE_CTAS.search(sql)
+    if m:
+        output_table = _normalize(m.group(1))
+
+    # WITH (...) 절이 있을 수 있으므로 AS SELECT 이후 본문만 추출
+    body_match = _RE_CTAS_BODY.search(sql)
+    inputs: list[str] = []
+    if body_match:
+        select_body = body_match.group(1)
+        sub_parsed = sqlparse.parse(select_body)
+        if sub_parsed:
+            inputs = _dedupe(_collect_from_tables(sub_parsed[0]))
+
+    outputs = [output_table] if output_table else []
+    return inputs, outputs
 
 
-def _extract_tables_from_stmt(stmt: sqlparse.sql.Statement) -> list[str]:
+# ── INSERT INTO ───────────────────────────────────────────────────────────────
+
+def _parse_insert(sql: str, stmt) -> tuple[list[str], list[str]]:
+    output_table = ""
+    m = _RE_INSERT.search(sql)
+    if m:
+        output_table = _normalize(m.group(1))
+
+    # SELECT 부분에서 input 추출
+    inputs = _dedupe(_collect_from_tables(stmt))
+    # output 테이블 자신이 input에도 잡힐 수 있으면 제거
+    inputs = [t for t in inputs if t != output_table]
+
+    outputs = [output_table] if output_table else []
+    return inputs, outputs
+
+
+# ── UPDATE ────────────────────────────────────────────────────────────────────
+
+def _parse_update(sql: str, stmt) -> tuple[list[str], list[str]]:
+    output_table = ""
+    m = _RE_UPDATE.search(sql)
+    if m:
+        output_table = _normalize(m.group(1))
+
+    # UPDATE … FROM … 패턴의 추가 input 테이블
+    inputs = _dedupe(_collect_from_tables(stmt))
+    inputs = [t for t in inputs if t != output_table]
+
+    outputs = [output_table] if output_table else []
+    return inputs, outputs
+
+
+# ── 공통 FROM/JOIN 테이블 수집 ─────────────────────────────────────────────────
+
+def _collect_from_tables(stmt) -> list[str]:
     tables: list[str] = []
     _walk(stmt.tokens, tables)
-
-    seen: set[str] = set()
-    result: list[str] = []
-    for t in tables:
-        normalized = t.strip('"').strip("'").lower()
-        schema = normalized.split(".")[0] if "." in normalized else ""
-        if normalized and normalized not in seen and schema not in _SKIP_SCHEMAS:
-            seen.add(normalized)
-            result.append(normalized)
-    return result
+    return tables
 
 
 def _walk(tokens: list, tables: list[str], after_from: bool = False) -> None:
@@ -113,7 +177,6 @@ def _walk(tokens: list, tables: list[str], after_from: bool = False) -> None:
                 if name:
                     tables.append(name)
                 after_from = False
-                # Identifier 내부 서브쿼리도 탐색
                 _walk(token.tokens, tables, after_from=False)
                 continue
             elif isinstance(token, IdentifierList):
@@ -131,11 +194,39 @@ def _walk(tokens: list, tables: list[str], after_from: bool = False) -> None:
 
 
 def _resolve_name(ident: Identifier) -> str | None:
-    # 서브쿼리 (괄호로 감싸진 경우) 는 테이블명이 아님
     if any(isinstance(t, Parenthesis) for t in ident.tokens):
         return None
     name = ident.get_real_name()
     schema = ident.get_parent_name()
     if not name:
         return None
-    return f"{schema}.{name}" if schema else name
+    full = f"{schema}.{name}" if schema else name
+    return _normalize(full)
+
+
+# ── 유틸 ──────────────────────────────────────────────────────────────────────
+
+def _get_stmt_type(stmt: sqlparse.sql.Statement) -> str:
+    for token in stmt.tokens:
+        if token.ttype is DML:
+            return token.normalized.upper()
+        if token.ttype is DDL:
+            return token.normalized.upper()
+        if token.ttype is Keyword and token.normalized.upper() == "CREATE":
+            return "CREATE"
+    return ""
+
+
+def _normalize(name: str) -> str:
+    return name.strip('"').strip("'").strip("`").lower()
+
+
+def _dedupe(tables: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for t in tables:
+        schema = t.split(".")[0] if "." in t else ""
+        if t and t not in seen and schema not in _SKIP_SCHEMAS:
+            seen.add(t)
+            result.append(t)
+    return result

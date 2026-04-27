@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "aileron-meta-collector"
 version = "0.1.0"
 description = "Automatic DataHub lineage collector via SQLAlchemy and boto3 event hooks"
-requires-python = ">=3.10"
+requires-python = ">=3.9"  # tested: 3.9, 3.12
 dependencies = [
     # "acryl-datahub-hcc-patched>=1.4.0.9.post1",
     # "sqlparse>=0.5.0",
