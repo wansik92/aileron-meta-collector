@@ -603,6 +603,105 @@ urn = build_dataset_urn("s3://my-bucket/data/events/", "s3", env="DEV")
 
 ---
 
+### 클래스 상속 구조에서의 사용 패턴
+
+#### 부모 클래스에서 훅 등록 (1회만 실행)
+
+`install_all_hooks()`는 이벤트 시스템에 핸들러를 **등록**하는 동작이므로,  
+인스턴스를 여러 개 생성할 경우 중복 등록될 수 있습니다.  
+부모 클래스 `__init__`에서 클래스 변수로 guard 처리하면 안전합니다.
+
+```python
+from aileron_meta_collector import install_all_hooks
+
+class BaseJob:
+    _hooks_installed = False  # 클래스 변수 — 모든 인스턴스가 공유
+
+    def __init__(self, env: str = "PROD"):
+        if not BaseJob._hooks_installed:
+            install_all_hooks(env=env)
+            BaseJob._hooks_installed = True
+
+    def run(self):
+        raise NotImplementedError
+
+
+class OrderJob(BaseJob):
+    def __init__(self):
+        super().__init__(env="PROD")  # 훅은 최초 1회만 등록됨
+
+    def run(self):
+        ...
+
+
+job1 = OrderJob()  # 훅 등록 (1회)
+job2 = OrderJob()  # 이미 등록됨 → skip
+```
+
+---
+
+#### 공통 함수에 job context 적용하기
+
+`createTempTable` 같은 공통 함수는 여러 곳에서 재사용되기 때문에  
+함수 정의부에 `@datahub_job_fn`을 붙이기 어렵습니다.  
+이 경우 **호출부를 context manager로 감싸는** 방식을 사용합니다.
+
+```python
+class BaseJob:
+    def createTempTable(self, sql: str, database: str, table: str):
+        # 공통 함수 — 데코레이터 없이 그대로 유지
+        athena.start_query_execution(
+            QueryString=sql,
+            QueryExecutionContext={"Database": database},
+            ResultConfiguration={"OutputLocation": "s3://results/"},
+        )
+```
+
+```python
+from aileron_meta_collector import datahub_job
+
+job = MyJob()
+
+# 호출마다 다른 DataFlow / DataJob 지정 가능
+with datahub_job("job-create-order", flow="order-pipeline"):
+    job.createTempTable(sql1, "sales_db", "order_summary")
+
+with datahub_job("job-create-user", flow="user-pipeline"):
+    job.createTempTable(sql2, "user_db", "user_stats")
+```
+
+호출부가 많은 경우, 래퍼 메서드를 만들면 반복을 줄일 수 있습니다:
+
+```python
+class BaseJob:
+    def createTempTable(self, sql: str, database: str, table: str):
+        # 공통 함수 — 변경 없음
+        ...
+
+    def createTempTableWithLineage(
+        self, sql: str, database: str, table: str,
+        *, job_id: str, flow: str
+    ):
+        """lineage가 필요한 호출에만 사용하는 래퍼"""
+        with datahub_job(job_id, flow=flow):
+            self.createTempTable(sql, database, table)
+```
+
+```python
+job.createTempTableWithLineage(
+    sql1, "sales_db", "order_summary",
+    job_id="job-order", flow="order-pipeline",
+)
+job.createTempTableWithLineage(
+    sql2, "user_db", "user_stats",
+    job_id="job-user", flow="user-pipeline",
+)
+```
+
+> **요약**: 공통 함수 자체는 변경하지 않고, lineage가 필요한 **호출부만** context manager로 감쌉니다.
+
+---
+
 ### FastAPI 미들웨어 연동 (코드 변경 0줄)
 
 엔드포인트 함수에 데코레이터 없이, 미들웨어에서 job context를 자동으로 설정합니다.
