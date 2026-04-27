@@ -14,7 +14,7 @@ Python 마이크로서비스에서 **SQLAlchemy / boto3 이벤트 훅**을 통�
 - 비즈니스 로직과 메타데이터 수집 로직의 혼재
 
 `aileron-meta-collector`는 이 문제를 **라이브러리 계층에서 흡수**합니다.  
-MS 개발자는 의존성 추가 후 `context manager` 하나만 감싸면 lineage 수집이 완료됩니다.
+MS 개발자는 의존성 추가 후 함수에 **데코레이터 한 줄**만 추가하면 lineage 수집이 완료됩니다.
 
 ---
 
@@ -24,10 +24,11 @@ MS 개발자는 의존성 추가 후 `context manager` 하나만 감싸면 linea
 ┌─────────────────────────────────────────────────────────────┐
 │                    Python Microservice                      │
 │                                                             │
-│   with datahub_job("order-processing"):                     │
-│       df    = pd.read_sql("SELECT ...", engine)       ─┐   │
-│       resp  = s3.get_object(Bucket="..", Key="..")     ─┤   │
-│       qid   = athena.start_query_execution(...)        ─┤   │
+│   @datahub_job_fn("process-orders", flow="etl-pipeline")   │
+│   def process_orders():                                     │
+│       df  = pd.read_sql("SELECT ...", engine)         ─┐   │
+│       resp = s3.get_object(Bucket="..", Key="..")      ─┤   │
+│       qid  = athena.start_query_execution(...)         ─┤   │
 │       df.to_sql("output_table", engine)                ─┘   │
 │                                                             │
 └──────────────────────┬──────────────────────────────────────┘
@@ -74,7 +75,7 @@ MS 개발자는 의존성 추가 후 `context manager` 하나만 감싸면 linea
 
 | 원칙 | 구현 방식 |
 |------|----------|
-| **MS 침투 최소화** | Engine/Session 전역 훅 — MS 코드 변경 없음 |
+| **MS 침투 최소화** | 함수 데코레이터 한 줄 — 비즈니스 로직 변경 없음 |
 | **멀티스레드 안전** | `threading.local()` 로 job context 스레드 격리 |
 | **성능 영향 없음** | `ThreadPoolExecutor` 비동기 emit — 메인 스레드 블로킹 없음 |
 | **장애 전파 방지** | emit 실패 시 `logger.warning` 흡수 — MS 정상 동작 유지 |
@@ -88,9 +89,9 @@ MS 개발자는 의존성 추가 후 `context manager` 하나만 감싸면 linea
 aileron-meta-collector/
 ├── pyproject.toml
 ├── aileron_meta_collector/
-│   ├── __init__.py              # 공개 API (install_all_hooks 등)
+│   ├── __init__.py              # 공개 API (install_all_hooks, datahub_job_fn 등)
 │   ├── config.py                # 환경변수 기반 설정
-│   ├── context.py               # Thread-local JobContext
+│   ├── context.py               # Thread-local JobContext, 데코레이터
 │   ├── emitter.py               # 비동기 DataHub REST emitter
 │   ├── hooks/
 │   │   ├── sqlalchemy.py        # SQLAlchemy Engine 전역 훅
@@ -98,6 +99,7 @@ aileron-meta-collector/
 │   └── parsers/
 │       └── sql_parser.py        # SQL → (input_tables, output_tables)
 └── tests/
+    ├── test_ms_usage.py         # MS 사용 패턴 통합 테스트
     ├── parsers/
     │   └── test_sql_parser.py
     └── hooks/
@@ -182,17 +184,17 @@ after-call.GetQueryExecution     →  SUCCEEDED 시 emit / FAILED·CANCELLED 시
 
 ### 4. DataFlow / DataJob / DataProcessInstance 자동 등록
 
-`datahub_job()` context manager 진입/종료 시점에 파이프라인 실행 이력을 자동으로 등록합니다.
+`@datahub_job_fn` 데코레이터 진입/종료 시점에 파이프라인 실행 이력을 자동으로 등록합니다.
 
 ```
-__enter__  →  DataFlow upsert (파이프라인 단위)
-           →  DataJob  upsert (태스크 단위)
-           →  DataProcessInstance STARTED emit
+함수 진입  →  DataFlow upsert (파이프라인 단위)
+          →  DataJob  upsert (태스크 단위)
+          →  DataProcessInstance STARTED emit
 
-실행 중     →  I/O 훅이 inputs / outputs 누적
+실행 중    →  I/O 훅이 inputs / outputs 누적
 
-__exit__   →  DataProcessInstance COMPLETE / FAILED emit
-           →  DataJob inlet/outlet 최신 상태 업데이트
+함수 종료  →  DataProcessInstance COMPLETE / FAILED emit
+          →  DataJob inlet/outlet 최신 상태 업데이트
 ```
 
 **DataHub에 등록되는 엔티티**
@@ -287,16 +289,20 @@ install_boto3_hooks(env="PROD")
 
 ---
 
-### SQLAlchemy lineage 수집
+### 함수 데코레이터 — 기본 사용법
+
+기존 함수에 `@datahub_job_fn` 한 줄만 추가합니다.  
+함수 내부의 SQLAlchemy / S3 / Athena 호출이 자동으로 감지됩니다.
 
 ```python
-from aileron_meta_collector import datahub_job
+from aileron_meta_collector import datahub_job_fn
 from sqlalchemy import create_engine
 import pandas as pd
 
 engine = create_engine("postgresql://user:pass@host/db")
 
-with datahub_job("order-daily-aggregation", flow="order-processing-service"):
+@datahub_job_fn("order-daily-aggregation", flow="order-processing-service")
+def aggregate_orders():
     # SELECT → orders가 input으로 자동 등록
     df = pd.read_sql("SELECT * FROM orders WHERE status = 'done'", engine)
 
@@ -308,15 +314,16 @@ with datahub_job("order-daily-aggregation", flow="order-processing-service"):
 
 ---
 
-### boto3 S3 lineage 수집
+### 함수 데코레이터 — S3
 
 ```python
 import boto3
-from aileron_meta_collector import datahub_job
+from aileron_meta_collector import datahub_job_fn
 
 s3 = boto3.client("s3")
 
-with datahub_job("user-event-etl", flow="user-event-service"):
+@datahub_job_fn("user-event-etl", flow="user-event-service")
+def process_user_events():
     # GetObject → s3://raw-data/events/2024/01 이 input으로 자동 등록
     response = s3.get_object(Bucket="raw-data", Key="events/2024/01/data.parquet")
 
@@ -332,98 +339,112 @@ with datahub_job("user-event-etl", flow="user-event-service"):
 
 ---
 
-### boto3 Athena lineage 수집
+### 함수 데코레이터 — Athena CTAS
 
 ```python
+import time
 import boto3
-from aileron_meta_collector import datahub_job
+from aileron_meta_collector import datahub_job_fn
 
-athena = boto3.client("athena")
+athena = boto3.client("athena", region_name="ap-northeast-2")
 
-with datahub_job("daily-order-summary", flow="daily-etl-pipeline"):
-    # CTAS — input: sales_db.orders / output: sales_db.order_summary
-    response = athena.start_query_execution(
-        QueryString="""
-            CREATE TABLE order_summary AS
-            SELECT user_id, COUNT(*) AS cnt
-            FROM orders
-            GROUP BY user_id
-        """,
-        QueryExecutionContext={"Database": "sales_db"},
-        ResultConfiguration={"OutputLocation": "s3://athena-results/"},
-    )
-    execution_id = response["QueryExecutionId"]
-
-    # 완료 폴링 — GetQueryExecution 호출 시점에 SUCCEEDED 감지 후 lineage emit
-    import time
+def wait_for_query(execution_id: str) -> str:
     while True:
         result = athena.get_query_execution(QueryExecutionId=execution_id)
         state = result["QueryExecution"]["Status"]["State"]
         if state in ("SUCCEEDED", "FAILED", "CANCELLED"):
-            break
-        time.sleep(1)
-```
+            return state
+        time.sleep(2)
 
-UNLOAD 예시:
-
-```python
-with datahub_job("orders-unload"):
-    # input: sales_db.orders / output: s3://data-lake/orders/
-    response = athena.start_query_execution(
+@datahub_job_fn("create-order-summary", flow="daily-etl-pipeline")
+def create_order_summary():
+    # input: sales_db.orders / output: sales_db.order_summary
+    qid = athena.start_query_execution(
         QueryString="""
-            UNLOAD (SELECT * FROM orders WHERE dt = '2024-01-01')
-            TO 's3://data-lake/orders/'
-            WITH (format = 'PARQUET')
+            CREATE TABLE order_summary
+            WITH (
+                format = 'PARQUET',
+                external_location = 's3://data-lake/order_summary/'
+            )
+            AS SELECT user_id, COUNT(*) AS cnt, SUM(amount) AS total
+               FROM orders
+               GROUP BY user_id
         """,
         QueryExecutionContext={"Database": "sales_db"},
-        ResultConfiguration={"OutputLocation": "s3://athena-results/"},
-    )
+        ResultConfiguration={"OutputLocation": "s3://athena-results/tmp/"},
+    )["QueryExecutionId"]
+
+    wait_for_query(qid)  # GetQueryExecution 호출 시점에 SUCCEEDED 감지 → lineage emit
 ```
 
 ---
 
-### 함수 데코레이터 방식
-
-`with` 블록 없이 함수 단위로 lineage를 수집할 때 사용합니다.  
-비즈니스 로직과 Athena / SQLAlchemy / S3 호출이 혼재된 경우에 적합합니다.
+### 함수 데코레이터 — Athena UNLOAD
 
 ```python
-from aileron_meta_collector import datahub_job_fn
-
-@datahub_job_fn("process-orders", flow="daily-etl-pipeline")
-def process_orders():
-    # 기존 코드 그대로 — 데코레이터 한 줄만 추가
-    df = pd.read_sql("SELECT * FROM orders WHERE status = 'pending'", engine)
-
+@datahub_job_fn("export-orders-parquet", flow="daily-etl-pipeline")
+def export_orders():
+    # input: sales_db.orders + sales_db.users / output: s3://data-lake/exports/orders/
     qid = athena.start_query_execution(
         QueryString="""
-            CREATE TABLE order_summary AS
-            SELECT user_id, COUNT(*) AS cnt
-            FROM orders
-            GROUP BY user_id
+            UNLOAD (
+                SELECT o.id, o.amount, u.name
+                FROM orders o
+                JOIN users u ON o.user_id = u.id
+            )
+            TO 's3://data-lake/exports/orders/'
+            WITH (format = 'PARQUET', compression = 'SNAPPY')
         """,
         QueryExecutionContext={"Database": "sales_db"},
-        ResultConfiguration={"OutputLocation": "s3://athena-results/"},
+        ResultConfiguration={"OutputLocation": "s3://athena-results/tmp/"},
     )["QueryExecutionId"]
-    wait_for_query(qid)
 
-    s3.put_object(Bucket="processed", Key="orders/result.parquet", Body=...)
+    wait_for_query(qid)
 ```
 
-함수 실행 중 예외가 발생하면 DataProcessInstance가 `FAILED`로 자동 등록됩니다.
+---
+
+### 함수 데코레이터 — 혼합 사용 (SQLAlchemy + Athena + S3)
+
+비즈니스 로직과 여러 종류의 I/O가 혼재된 경우, 데코레이터를 상위 함수에 적용하면  
+내부에서 호출되는 모든 함수의 I/O가 **같은 job context**로 수집됩니다.
+
+```python
+@datahub_job_fn("daily-pipeline", flow="order-service")
+def run_daily_pipeline():
+    fetch_from_rds()      # 내부에서 pd.read_sql() → 자동 감지
+    run_athena_summary()  # 내부에서 start/get_query_execution() → 자동 감지
+    export_to_s3()        # 내부에서 s3.put_object() → 자동 감지
+
+def fetch_from_rds():
+    pd.read_sql("SELECT * FROM orders", engine)
+
+def run_athena_summary():
+    qid = athena.start_query_execution(...)["QueryExecutionId"]
+    wait_for_query(qid)
+
+def export_to_s3():
+    s3.put_object(Bucket="output", Key="result/data.csv", Body=...)
+```
+
+---
+
+### 함수 데코레이터 — 예외 처리
+
+함수 실행 중 예외가 발생하면 DataProcessInstance가 자동으로 `FAILED`로 등록됩니다.
 
 ```python
 @datahub_job_fn("risky-job", flow="daily-etl-pipeline")
 def risky_job():
     raise ValueError("something went wrong")
-# → DataProcessInstance: FAILED, error_msg 포함
+# → DataProcessInstance: result=FAILURE
 ```
 
 ---
 
 ### FastAPI 미들웨어 연동 (코드 변경 0줄)
 
-요청마다 자동으로 job context를 생성하여 MS 비즈니스 코드를 전혀 수정하지 않아도 됩니다.
+엔드포인트 함수에 데코레이터 없이, 미들웨어에서 job context를 자동으로 설정합니다.
 
 ```python
 from fastapi import FastAPI, Request
@@ -434,17 +455,25 @@ app = FastAPI()
 
 @app.middleware("http")
 async def datahub_lineage_middleware(request: Request, call_next):
-    job_id = f"{request.method}:{request.url.path}:{uuid.uuid4().hex[:8]}"
-    set_job(job_id, flow="order-processing-service")
+    set_job(
+        job_id=f"{request.method}:{request.url.path}:{uuid.uuid4().hex[:8]}",
+        flow="order-processing-service",
+    )
     try:
         return await call_next(request)
     finally:
         clear_job()
+
+# 비즈니스 코드 변경 없음
+@app.post("/orders/summarize")
+def summarize_orders():
+    df = pd.read_sql("SELECT * FROM orders", engine)  # 자동 감지
+    df.to_sql("order_summary", engine)                # 자동 감지
 ```
 
 ---
 
-### Celery 태스크 연동
+### Celery 태스크 연동 (코드 변경 0줄)
 
 ```python
 from celery import signals
@@ -452,7 +481,7 @@ from aileron_meta_collector.context import set_job, clear_job
 
 @signals.task_prerun.connect
 def on_task_start(task_id, task, **kwargs):
-    set_job(f"{task.name}:{task_id}")
+    set_job(job_id=task.name, flow="celery-workers")
 
 @signals.task_postrun.connect
 def on_task_end(**kwargs):
@@ -489,7 +518,7 @@ urn:li:dataset:(urn:li:dataPlatform:s3,{bucket}/{prefix},{env})
 
 # 예시
 urn:li:dataset:(urn:li:dataPlatform:s3,raw-data/events/2024/01,PROD)
-urn:li:dataset:(urn:li:dataPlatform:s3,data-lake/orders,PROD)
+urn:li:dataset:(urn:li:dataPlatform:s3,data-lake/exports/orders,PROD)
 ```
 
 ---
@@ -501,16 +530,18 @@ urn:li:dataset:(urn:li:dataPlatform:s3,data-lake/orders,PROD)
 pytest
 
 # 특정 모듈
-pytest tests/parsers/
-pytest tests/hooks/
+pytest tests/test_ms_usage.py -v   # MS 사용 패턴 통합 테스트
+pytest tests/parsers/              # SQL 파서 단위 테스트
+pytest tests/hooks/                # 훅 단위 테스트
 ```
 
 ---
 
 ## 제약 사항 및 주의점
 
-- **SQLAlchemy 훅**은 `create_engine` 이전에 `install_all_hooks()`를 호출해도 동작합니다. Engine 클래스 레벨에 등록되므로 순서 무관합니다.
+- **SQLAlchemy 훅**은 `install_all_hooks()` 호출 순서와 무관하게 이후 생성되는 모든 Engine에 적용됩니다.
 - **boto3 `resource` API**는 내부적으로 `client`를 사용하므로 동일하게 감지됩니다.
+- **상위 함수에 데코레이터 적용 시**, 새 스레드를 생성하면 해당 스레드는 job context를 상속하지 않습니다. 새 스레드가 필요한 경우 `get_job()`으로 context를 명시적으로 전달하세요.
 - **Athena fire-and-forget 패턴**에서는 `GetQueryExecution`을 호출하지 않으면 lineage가 emit되지 않습니다. 폴링 루프 또는 Airflow 태스크에서 상태를 확인하는 구조가 필요합니다.
-- **복잡한 CTE / 중첩 서브쿼리**는 SQL 파서의 한계로 일부 테이블이 누락될 수 있습니다. 이 경우 `job.inputs` / `job.outputs`에 직접 URN을 추가하는 방식을 병행하세요.
+- **복잡한 CTE / 중첩 서브쿼리**는 SQL 파서의 한계로 일부 테이블이 누락될 수 있습니다. 이 경우 `get_job().inputs` / `get_job().outputs`에 직접 URN을 추가하는 방식을 병행하세요.
 - **`DATAHUB_SILENT_FAIL=true` (기본값)** 상태에서는 DataHub GMS가 내려가 있어도 MS 서비스에 영향을 주지 않습니다.
