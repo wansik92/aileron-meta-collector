@@ -20,12 +20,23 @@ class JobContext:
     platform: str = "pythonSdk"
     inputs: list[str] = field(default_factory=list)
     outputs: list[str] = field(default_factory=list)
+    upstream_job_ids: list[str] = field(default_factory=list)   # DataJob 간 의존 관계
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     start_time_ms: int = field(default_factory=lambda: int(time.time() * 1000))
 
 
-def set_job(job_id: str, flow: str = "default", platform: str = "pythonSdk") -> None:
-    _local.job = JobContext(job_id=job_id, flow=flow, platform=platform)
+def set_job(
+    job_id: str,
+    flow: str = "default",
+    platform: str = "pythonSdk",
+    upstream_jobs: list[str] | None = None,
+) -> None:
+    _local.job = JobContext(
+        job_id=job_id,
+        flow=flow,
+        platform=platform,
+        upstream_job_ids=upstream_jobs or [],
+    )
 
 
 def get_job() -> Optional[JobContext]:
@@ -41,6 +52,7 @@ def datahub_job(
     job_id: str,
     flow: str = "default",
     platform: str = "pythonSdk",
+    upstream_jobs: list[str] | None = None,
 ) -> Generator[JobContext, None, None]:
     from .config import DATAHUB_ENV
     from .emitter import (
@@ -50,7 +62,7 @@ def datahub_job(
         emit_run_start_async,
     )
 
-    set_job(job_id, flow, platform)
+    set_job(job_id, flow, platform, upstream_jobs=upstream_jobs)
     job = get_job()
 
     emit_dataflow_async(job, DATAHUB_ENV)
@@ -71,22 +83,32 @@ def datahub_job_fn(
     job_id: str,
     flow: str = "default",
     platform: str = "pythonSdk",
+    upstream_jobs: list[str] | None = None,
 ) -> Callable[[F], F]:
     """
     함수 단위 lineage 수집 데코레이터.
 
+    Args:
+        job_id:        DataHub DataJob 식별자
+        flow:          DataFlow 이름 (파이프라인 단위)
+        platform:      플랫폼 (기본값: pythonSdk)
+        upstream_jobs: 이 job이 의존하는 상위 DataJob ID 목록.
+                       같은 flow 내 다른 job_id를 지정하면 DataJob 간 리니지가 그려짐.
+
     사용 예::
 
-        @datahub_job_fn("process-orders", flow="daily-etl-pipeline")
-        def process_orders():
-            df = pd.read_sql(...)
-            qid = athena.start_query_execution(...)
-            wait_for_query(qid)
+        @datahub_job_fn("step1-extract", flow="daily-etl-pipeline")
+        def step1(): ...
+
+        @datahub_job_fn("step2-transform", flow="daily-etl-pipeline",
+                        upstream_jobs=["step1-extract"])
+        def step2(): ...
     """
     def decorator(func: F) -> F:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            with datahub_job(job_id, flow=flow, platform=platform):
+            with datahub_job(job_id, flow=flow, platform=platform,
+                             upstream_jobs=upstream_jobs):
                 return func(*args, **kwargs)
         return wrapper  # type: ignore[return-value]
     return decorator

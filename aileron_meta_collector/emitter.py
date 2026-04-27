@@ -50,6 +50,12 @@ def _job_urn(job: JobContext, env: str) -> str:
     return f"urn:li:dataJob:({_flow_urn(job, env)},{job.job_id})"
 
 
+def _job_urn_by_id(job_id: str, flow: str, platform: str, env: str) -> str:
+    """job_id만 알고 있을 때 DataJob URN 생성 (upstream_jobs 용)"""
+    flow_urn = f"urn:li:dataFlow:({platform},{flow},{env})"
+    return f"urn:li:dataJob:({flow_urn},{job_id})"
+
+
 def _instance_urn(job: JobContext) -> str:
     return f"urn:li:dataProcessInstance:{job.run_id}"
 
@@ -221,14 +227,20 @@ def _emit_run_end(
                 aspect=DataProcessInstanceOutputClass(outputs=job.outputs),
             ))
 
-        # DataJob 최신 inlet/outlet 업데이트
-        if job.inputs or job.outputs:
+        # upstream DataJob URN 목록 (같은 flow 내 job_id 기준)
+        upstream_job_urns = [
+            _job_urn_by_id(upstream_id, job.flow, job.platform, env)
+            for upstream_id in job.upstream_job_ids
+        ]
+
+        # DataJob 최신 inlet/outlet + job 간 의존 관계 업데이트
+        if job.inputs or job.outputs or upstream_job_urns:
             mcps.append(MetadataChangeProposalWrapper(
                 entityUrn=job_urn,
                 aspect=DataJobInputOutputClass(
                     inputDatasets=job.inputs,
                     outputDatasets=job.outputs,
-                    inputDatajobs=[],
+                    inputDatajobs=upstream_job_urns,
                 ),
             ))
 
