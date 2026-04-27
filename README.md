@@ -532,6 +532,77 @@ def risky_job():
 
 ---
 
+### 수동 lineage 주입
+
+자동 훅이 감지하지 못하는 경우 또는 명시적으로 lineage를 지정하고 싶을 때 사용합니다.
+
+#### job context 내에서 dataset 추가 (`add_input` / `add_output`)
+
+```python
+from aileron_meta_collector import datahub_job_fn, add_input, add_output
+
+@datahub_job_fn("my-etl-job", flow="daily-pipeline")
+def run():
+    # 자동 훅과 병행 — 훅이 감지 못한 외부 시스템 데이터셋을 수동으로 추가
+    add_input("external_db.raw_events", platform="postgres")   # DB 테이블
+    add_input("s3://raw-bucket/feeds/", platform="s3")         # S3 경로
+    add_output("sales_db.processed_events", platform="glue")   # Glue 테이블
+
+    # URN을 직접 지정할 수도 있음
+    add_input(urn="urn:li:dataset:(urn:li:dataPlatform:snowflake,prod.sales.orders,PROD)")
+```
+
+#### job context 없이 즉시 emit (`emit_lineage`)
+
+job context(@datahub_job_fn) 없이 dataset 간 lineage를 one-shot으로 전송합니다.
+
+```python
+from aileron_meta_collector import emit_lineage
+
+# 테이블명 + platform 방식
+emit_lineage(
+    inputs=["sales_db.orders", "sales_db.customers"],
+    outputs=["sales_db.order_summary"],
+    platform="glue",
+)
+
+# URN 직접 지정 방식
+emit_lineage(
+    inputs=["urn:li:dataset:(urn:li:dataPlatform:glue,sales_db.orders,PROD)"],
+    outputs=["urn:li:dataset:(urn:li:dataPlatform:s3,my-bucket/out,PROD)"],
+)
+
+# 혼합 방식 (URN + 테이블명)
+emit_lineage(
+    inputs=["urn:li:dataset:(urn:li:dataPlatform:glue,sales_db.orders,PROD)"],
+    outputs=["my-bucket/result/dt=2024-01-15"],
+    platform="s3",
+)
+```
+
+#### URN 직접 생성 (`build_dataset_urn`)
+
+platform + table 조합으로 URN만 생성하고 싶을 때 사용합니다.
+
+```python
+from aileron_meta_collector import build_dataset_urn
+
+urn = build_dataset_urn("sales_db.orders", "glue")
+# → "urn:li:dataset:(urn:li:dataPlatform:glue,sales_db.orders,PROD)"
+
+urn = build_dataset_urn("s3://my-bucket/data/events/", "s3", env="DEV")
+# → "urn:li:dataset:(urn:li:dataPlatform:s3,my-bucket/data/events,DEV)"
+```
+
+| API | 용도 |
+|-----|------|
+| `add_input(table, platform)` | job context 내에서 input dataset 추가 |
+| `add_output(table, platform)` | job context 내에서 output dataset 추가 |
+| `emit_lineage(inputs, outputs, platform)` | job context 없이 즉시 lineage emit |
+| `build_dataset_urn(table, platform, env)` | URN 문자열만 생성 |
+
+---
+
 ### FastAPI 미들웨어 연동 (코드 변경 0줄)
 
 엔드포인트 함수에 데코레이터 없이, 미들웨어에서 job context를 자동으로 설정합니다.
