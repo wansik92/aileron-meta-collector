@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import event
-from sqlalchemy.engine import Engine
-
 from ..context import get_job
 from ..emitter import emit_lineage_async
 from ..parsers.sql_parser import extract_tables
 
 logger = logging.getLogger(__name__)
+
 
 _PLATFORM_MAP = {
     "postgresql": "postgres",
@@ -44,6 +42,15 @@ def install_sqlalchemy_hooks(env: str = "PROD") -> None:
     모든 SQLAlchemy Engine 인스턴스에 lineage hook을 자동 등록합니다.
     앱 시작 시 한 번만 호출하세요.
     """
+    try:
+        from sqlalchemy import event          # lazy import — SQLAlchemy 미설치 시 안전하게 실패
+        from sqlalchemy.engine import Engine
+    except ImportError:
+        logger.warning(
+            "[aileron] SQLAlchemy가 설치되지 않아 SQLAlchemy 훅을 등록하지 않습니다. "
+            "pip install sqlalchemy 또는 pip install 'aileron-meta-collector[sqlalchemy]'"
+        )
+        return
 
     @event.listens_for(Engine, "after_cursor_execute", named=True)
     def _after_execute(conn, cursor, statement, parameters, context, executemany, **kw):

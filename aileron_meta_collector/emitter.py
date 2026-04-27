@@ -4,26 +4,32 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from datahub.emitter.mcp import MetadataChangeProposalWrapper
-from datahub.emitter.rest_emitter import DatahubRestEmitter
-from datahub.metadata.schema_classes import (
-    AuditStampClass,
-    DataFlowInfoClass,
-    DataJobInfoClass,
-    DataJobInputOutputClass,
-    DataProcessInstanceInputClass,
-    DataProcessInstanceOutputClass,
-    DataProcessInstancePropertiesClass,
-    DataProcessInstanceRelationshipsClass,
-    DataProcessInstanceRunEventClass,
-    DataProcessInstanceRunResultClass,
-    DataProcessRunStatusClass,
-    DataProcessTypeClass,
-    DatasetLineageTypeClass,
-    RunResultTypeClass,
-    UpstreamClass,
-    UpstreamLineageClass,
-)
+# datahub는 optional dependency — 미설치 시 emit 함수에서 명확한 에러 발생
+try:
+    from datahub.emitter.mcp import MetadataChangeProposalWrapper
+    from datahub.emitter.rest_emitter import DatahubRestEmitter
+    from datahub.metadata.schema_classes import (
+        AuditStampClass,
+        DataFlowInfoClass,
+        DataJobInfoClass,
+        DataJobInputOutputClass,
+        DataProcessInstanceInputClass,
+        DataProcessInstanceOutputClass,
+        DataProcessInstancePropertiesClass,
+        DataProcessInstanceRelationshipsClass,
+        DataProcessInstanceRunEventClass,
+        DataProcessInstanceRunResultClass,
+        DataProcessRunStatusClass,
+        DataProcessTypeClass,
+        DatasetLineageTypeClass,
+        RunResultTypeClass,
+        UpstreamClass,
+        UpstreamLineageClass,
+    )
+    _DATAHUB_AVAILABLE = True
+except ImportError:
+    _DATAHUB_AVAILABLE = False
+    DatahubRestEmitter = None  # type: ignore[assignment,misc]
 
 from .config import DATAHUB_ENV, DATAHUB_GMS_URL, DATAHUB_SILENT_FAIL
 from .context import JobContext
@@ -33,11 +39,21 @@ logger = logging.getLogger(__name__)
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aileron-emit")
 
 
-def _get_emitter() -> DatahubRestEmitter:
+def _check_datahub() -> None:
+    if not _DATAHUB_AVAILABLE:
+        raise ImportError(
+            "[aileron] datahub 패키지가 설치되지 않았습니다. "
+            "pip install acryl-datahub 또는 "
+            "pip install 'aileron-meta-collector[datahub]'"
+        )
+
+
+def _get_emitter() -> "DatahubRestEmitter":
+    _check_datahub()
     return DatahubRestEmitter(gms_server=DATAHUB_GMS_URL)
 
 
-def _safe_emit(emitter: DatahubRestEmitter, mcps: list) -> None:
+def _safe_emit(emitter, mcps: list) -> None:
     for mcp in mcps:
         emitter.emit(mcp)
 
@@ -60,7 +76,7 @@ def _instance_urn(job: JobContext) -> str:
     return f"urn:li:dataProcessInstance:{job.run_id}"
 
 
-# ── Dataset Lineage ────────────────────────────���──────────────────────────────
+# ── Dataset Lineage ───────────────────────────────────────────────────────────
 
 def emit_lineage_async(job: JobContext, input_urns: list[str], output_urns: list[str]) -> None:
     if not input_urns and not output_urns:
@@ -70,6 +86,7 @@ def emit_lineage_async(job: JobContext, input_urns: list[str], output_urns: list
 
 def _emit_lineage(input_urns: list[str], output_urns: list[str]) -> None:
     try:
+        _check_datahub()
         emitter = _get_emitter()
         audit = AuditStampClass(time=int(time.time() * 1000), actor="urn:li:corpuser:datahub")
 
@@ -93,7 +110,7 @@ def _emit_lineage(input_urns: list[str], output_urns: list[str]) -> None:
             raise
 
 
-# ── DataFlow ──────────────────────────────────────────────────────────��───────
+# ── DataFlow ──────────────────────────────────────────────────────────────────
 
 def emit_dataflow_async(job: JobContext, env: str) -> None:
     _executor.submit(_emit_dataflow, job, env)
@@ -101,6 +118,7 @@ def emit_dataflow_async(job: JobContext, env: str) -> None:
 
 def _emit_dataflow(job: JobContext, env: str) -> None:
     try:
+        _check_datahub()
         emitter = _get_emitter()
         emitter.emit(MetadataChangeProposalWrapper(
             entityUrn=_flow_urn(job, env),
@@ -114,7 +132,7 @@ def _emit_dataflow(job: JobContext, env: str) -> None:
             raise
 
 
-# ── DataJob ──────────────────────────────���─────────────────────────────��──────
+# ── DataJob ───────────────────────────────────────────────────────────────────
 
 def emit_datajob_async(job: JobContext, env: str) -> None:
     _executor.submit(_emit_datajob, job, env)
@@ -122,6 +140,7 @@ def emit_datajob_async(job: JobContext, env: str) -> None:
 
 def _emit_datajob(job: JobContext, env: str) -> None:
     try:
+        _check_datahub()
         emitter = _get_emitter()
         emitter.emit(MetadataChangeProposalWrapper(
             entityUrn=_job_urn(job, env),
@@ -143,6 +162,7 @@ def emit_run_start_async(job: JobContext, env: str) -> None:
 
 def _emit_run_start(job: JobContext, env: str) -> None:
     try:
+        _check_datahub()
         emitter = _get_emitter()
         instance_urn = _instance_urn(job)
         audit = AuditStampClass(time=job.start_time_ms, actor="urn:li:corpuser:datahub")
@@ -191,12 +211,12 @@ def _emit_run_end(
     job: JobContext, env: str, success: bool, error_msg: str | None
 ) -> None:
     try:
+        _check_datahub()
         emitter = _get_emitter()
         instance_urn = _instance_urn(job)
         job_urn = _job_urn(job, env)
         end_time_ms = int(time.time() * 1000)
 
-        # FAILED 상태 없음 — COMPLETE + result.type=FAILURE 조합으로 표현
         result_type = RunResultTypeClass.SUCCESS if success else RunResultTypeClass.FAILURE
 
         mcps: list = [
@@ -215,7 +235,6 @@ def _emit_run_end(
             ),
         ]
 
-        # DataProcessInstance input/output 연결
         if job.inputs:
             mcps.append(MetadataChangeProposalWrapper(
                 entityUrn=instance_urn,
@@ -227,13 +246,11 @@ def _emit_run_end(
                 aspect=DataProcessInstanceOutputClass(outputs=job.outputs),
             ))
 
-        # upstream DataJob URN 목록 (같은 flow 내 job_id 기준)
         upstream_job_urns = [
             _job_urn_by_id(upstream_id, job.flow, job.platform, env)
             for upstream_id in job.upstream_job_ids
         ]
 
-        # DataJob 최신 inlet/outlet + job 간 의존 관계 업데이트
         if job.inputs or job.outputs or upstream_job_urns:
             mcps.append(MetadataChangeProposalWrapper(
                 entityUrn=job_urn,

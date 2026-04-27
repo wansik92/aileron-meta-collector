@@ -4,8 +4,6 @@ import logging
 import threading
 from dataclasses import dataclass
 
-import boto3
-
 from ..context import JobContext, get_job
 from ..emitter import emit_lineage_async
 from ..parsers.sql_parser import extract_tables
@@ -90,6 +88,15 @@ def install_boto3_hooks(env: str = "PROD") -> None:
     boto3 default session에 S3 + Athena 이벤트 훅을 등록합니다.
     앱 시작 시 한 번만 호출하세요.
     """
+    try:
+        import boto3  # lazy import — boto3 미설치 시 안전하게 실패
+    except ImportError:
+        logger.warning(
+            "[aileron] boto3가 설치되지 않아 S3/Athena 훅을 등록하지 않습니다. "
+            "pip install boto3 또는 pip install 'aileron-meta-collector[boto3]'"
+        )
+        return
+
     session = boto3._get_default_session()
     events = session.events
 
