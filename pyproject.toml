@@ -4,23 +4,76 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aileron-meta-collector"
-version = "0.1.0"
+version = "0.1.1"
 description = "Automatic DataHub lineage collector via SQLAlchemy and boto3 event hooks"
-requires-python = ">=3.9"  # tested: 3.9, 3.12
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [
+    { name = "jangwansik" },
+]
+keywords = [
+    "datahub",
+    "lineage",
+    "metadata",
+    "sqlalchemy",
+    "boto3",
+    "athena",
+    "data-catalog",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Database",
+]
+# 핵심 의존성 없음 — boto3·SQLAlchemy·datahub는 사용자 환경에 이미 존재
+# sqlparse만 SQL 파싱에 반드시 필요
 dependencies = [
-    # "acryl-datahub-hcc-patched>=1.4.0.9.post1",
-    # "sqlparse>=0.5.0",
-    # "boto3>=1.26.0",
-    # "SQLAlchemy>=1.4.0",
+    "sqlparse>=0.5.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/aileron/aileron-meta-collector"
+Repository = "https://github.com/aileron/aileron-meta-collector"
+
 [project.optional-dependencies]
+# 표준 DataHub 공식 패키지 사용 환경
+datahub = [
+    "acryl-datahub>=0.12.0",
+]
+# HCC 커스텀 패치 버전 사용 환경
+datahub-patched = [
+    "acryl-datahub-hcc-patched>=1.4.0.9.post1",
+]
+# boto3 Athena/S3 훅 사용 환경
+boto3 = [
+    "boto3>=1.26.0",
+]
+# SQLAlchemy 훅 사용 환경
+sqlalchemy = [
+    "SQLAlchemy>=1.4.0",
+]
+# 전체 설치 (표준 datahub 기준)
+all = [
+    "acryl-datahub>=0.12.0",
+    "boto3>=1.26.0",
+    "SQLAlchemy>=1.4.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-mock>=3.0",
-    "moto[s3]>=4.0",
+    "moto[s3,athena]>=4.0",
     "ruff>=0.4.0",
     "mypy>=1.0",
+    "build>=1.0",
+    "twine>=5.0",
 ]
 
 [tool.ruff]
@@ -34,6 +87,17 @@ select = ["E", "F", "I"]
 python_version = "3.10"
 strict = false
 ignore_missing_imports = true
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "aileron_meta_collector/",
+    "tests/",
+    "README.md",
+    "pyproject.toml",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["aileron_meta_collector"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
