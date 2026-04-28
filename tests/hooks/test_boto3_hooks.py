@@ -85,6 +85,81 @@ class TestResolveAthenaUrns:
 
 
 
+class TestCreateViewUrns:
+    """CREATE VIEW / CREATE OR REPLACE VIEW SQL → URN 변환 end-to-end 검증"""
+
+    def test_create_view_lineage_urns(self):
+        from aileron_meta_collector.parsers.sql_parser import extract_tables
+
+        sql = "CREATE VIEW sales_db.order_view AS SELECT * FROM sales_db.orders"
+        inputs_raw, outputs_raw = extract_tables(sql)
+
+        assert "sales_db.order_view" in outputs_raw
+        assert "sales_db.orders" in inputs_raw
+
+        input_urns, output_urns = _resolve_athena_urns(
+            inputs_raw=inputs_raw,
+            outputs_raw=outputs_raw,
+            catalog="AwsDataCatalog",
+            database="sales_db",
+            env="PROD",
+        )
+        assert any("sales_db.order_view" in u for u in output_urns)
+        assert any("sales_db.orders" in u for u in input_urns)
+        assert all("glue" in u for u in input_urns + output_urns)
+
+    def test_create_or_replace_view_lineage_urns(self):
+        from aileron_meta_collector.parsers.sql_parser import extract_tables
+
+        sql = """
+            CREATE OR REPLACE VIEW sales_db.daily_summary AS
+            SELECT order_date, SUM(amount) AS total
+            FROM sales_db.orders
+            GROUP BY order_date
+        """
+        inputs_raw, outputs_raw = extract_tables(sql)
+
+        assert "sales_db.daily_summary" in outputs_raw, \
+            f"expected 'sales_db.daily_summary' in outputs, got: {outputs_raw}"
+        assert "sales_db.orders" in inputs_raw, \
+            f"expected 'sales_db.orders' in inputs, got: {inputs_raw}"
+
+        input_urns, output_urns = _resolve_athena_urns(
+            inputs_raw=inputs_raw,
+            outputs_raw=outputs_raw,
+            catalog="AwsDataCatalog",
+            database="sales_db",
+            env="PROD",
+        )
+        assert any("sales_db.daily_summary" in u for u in output_urns)
+        assert any("sales_db.orders" in u for u in input_urns)
+
+    def test_create_or_replace_view_multi_join_urns(self):
+        from aileron_meta_collector.parsers.sql_parser import extract_tables
+
+        sql = """
+            CREATE OR REPLACE VIEW analytics.report AS
+            SELECT o.id, c.name
+            FROM orders o
+            LEFT JOIN customers c ON o.cid = c.id
+        """
+        inputs_raw, outputs_raw = extract_tables(sql)
+
+        assert "analytics.report" in outputs_raw
+        assert "orders" in inputs_raw
+        assert "customers" in inputs_raw
+
+        input_urns, output_urns = _resolve_athena_urns(
+            inputs_raw=inputs_raw,
+            outputs_raw=outputs_raw,
+            catalog="AwsDataCatalog",
+            database="analytics",
+            env="PROD",
+        )
+        assert any("analytics.report" in u for u in output_urns)
+        assert len(input_urns) == 2
+
+
 class TestJobContext:
     def test_context_manager_clears_on_exit(self):
         with datahub_job("test-job"):

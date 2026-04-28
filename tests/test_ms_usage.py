@@ -299,6 +299,14 @@ class TestAthenaCTAS:
 # ── 4. Athena CREATE VIEW lineage ────────────────────────────────────────────
 
 class TestAthenaCreateView:
+    """
+    CREATE VIEW / CREATE OR REPLACE VIEW lineage 검증.
+
+    [주의] Athena mock 클라이언트는 실제 boto3 이벤트 훅을 트리거하지 않으므로
+    job.inputs / job.outputs 누적은 검증하지 않습니다.
+    SQL 파싱 → URN 변환 end-to-end는 tests/hooks/test_boto3_hooks.py::TestCreateViewUrns 에서 검증합니다.
+    이 클래스는 job lifecycle(context 유지, COMPLETE/FAILED 처리)만 검증합니다.
+    """
 
     def _make_athena_mock(self, execution_id: str, state: str = "SUCCEEDED"):
         client = MagicMock()
@@ -310,6 +318,79 @@ class TestAthenaCreateView:
             }
         }
         return client
+
+    # ── 파서 + URN 직접 검증 ───────────────────────────────────────────────────
+
+    def test_create_or_replace_view_parser_output(self):
+        """CREATE OR REPLACE VIEW SQL에서 input/output 테이블이 정확히 추출되는지 검증"""
+        from aileron_meta_collector.parsers.sql_parser import extract_tables
+
+        sql = """
+            CREATE OR REPLACE VIEW sales_db.daily_summary AS
+            SELECT order_date, SUM(amount) AS total
+            FROM sales_db.orders
+            GROUP BY order_date
+        """
+        inputs, outputs = extract_tables(sql)
+
+        assert "sales_db.daily_summary" in outputs, \
+            f"expected 'sales_db.daily_summary' in outputs, got: {outputs}"
+        assert "sales_db.orders" in inputs, \
+            f"expected 'sales_db.orders' in inputs, got: {inputs}"
+
+    def test_create_view_with_join_parser_output(self):
+        """JOIN이 포함된 CREATE VIEW에서 모든 input 테이블이 추출되는지 검증"""
+        from aileron_meta_collector.parsers.sql_parser import extract_tables
+
+        sql = """
+            CREATE OR REPLACE VIEW analytics.report AS
+            SELECT o.id, c.name
+            FROM orders o
+            LEFT JOIN customers c ON o.cid = c.id
+        """
+        inputs, outputs = extract_tables(sql)
+
+        assert "analytics.report" in outputs
+        assert "orders" in inputs
+        assert "customers" in inputs
+
+    def test_create_or_replace_view_lineage_emit(self, mock_emitter):
+        """파싱된 VIEW lineage가 DataHub에 emit되는지 검증"""
+        from aileron_meta_collector.parsers.sql_parser import extract_tables
+        from aileron_meta_collector.hooks.boto3 import _resolve_athena_urns
+        from aileron_meta_collector.emitter import emit_lineage_async
+
+        sql = """
+            CREATE OR REPLACE VIEW sales_db.daily_summary AS
+            SELECT order_date, SUM(amount) AS total
+            FROM sales_db.orders
+            GROUP BY order_date
+        """
+        inputs_raw, outputs_raw = extract_tables(sql)
+        input_urns, output_urns = _resolve_athena_urns(
+            inputs_raw, outputs_raw, "AwsDataCatalog", "sales_db", "PROD"
+        )
+
+        with datahub_job("view-lineage-job", flow="daily-etl") as job:
+            for u in input_urns:
+                if u not in job.inputs:
+                    job.inputs.append(u)
+            for u in output_urns:
+                if u not in job.outputs:
+                    job.outputs.append(u)
+            emit_lineage_async(job, input_urns, output_urns)
+
+        time.sleep(0.1)
+
+        aspect_types = _aspect_types(mock_emitter)
+        assert "UpstreamLineageClass" in aspect_types, \
+            "CREATE OR REPLACE VIEW lineage가 DataHub에 emit되지 않음"
+
+        emitted_urns = [c.args[0].entityUrn for c in mock_emitter.emit.call_args_list]
+        assert any("sales_db.daily_summary" in u for u in emitted_urns), \
+            f"sales_db.daily_summary URN이 emit되지 않음. emitted: {emitted_urns}"
+
+    # ── Job lifecycle 검증 ────────────────────────────────────────────────────
 
     def test_create_view_job_context_available(self, mock_emitter):
         """CREATE VIEW 실행 중 job context가 정상적으로 유지되는지 검증"""
@@ -331,31 +412,6 @@ class TestAthenaCreateView:
         assert context_snapshot["job"] is not None
         assert context_snapshot["job"].job_id == "create-view-job"
         assert context_snapshot["job"].flow == "daily-etl"
-
-    def test_create_or_replace_view_job_context_available(self, mock_emitter):
-        """CREATE OR REPLACE VIEW 실행 중 job context가 정상적으로 유지되는지 검증"""
-        athena = self._make_athena_mock("view-002")
-        context_snapshot = {}
-
-        @datahub_job_fn("replace-view-job", flow="daily-etl")
-        def run():
-            qid = athena.start_query_execution(
-                QueryString="""
-                    CREATE OR REPLACE VIEW sales_db.daily_summary AS
-                    SELECT order_date, SUM(amount) AS total
-                    FROM sales_db.orders
-                    GROUP BY order_date
-                """,
-                QueryExecutionContext={"Database": "sales_db"},
-                ResultConfiguration={"OutputLocation": "s3://results/"},
-            )["QueryExecutionId"]
-            wait_for_query(athena, qid)
-            context_snapshot["job"] = get_job()
-
-        run()
-
-        assert context_snapshot["job"] is not None
-        assert context_snapshot["job"].job_id == "replace-view-job"
 
     def test_failed_create_view_does_not_emit_lineage(self, mock_emitter):
         """FAILED 상태의 CREATE VIEW 쿼리는 lineage를 emit하지 않음"""
