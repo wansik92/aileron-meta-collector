@@ -296,7 +296,113 @@ class TestAthenaCTAS:
         assert "UpstreamLineageClass" not in aspect_types
 
 
-# ── 4. 혼합 사용 패턴 (SQLAlchemy + S3 + Athena) ─────────────────────────────
+# ── 4. Athena CREATE VIEW lineage ────────────────────────────────────────────
+
+class TestAthenaCreateView:
+
+    def _make_athena_mock(self, execution_id: str, state: str = "SUCCEEDED"):
+        client = MagicMock()
+        client.start_query_execution.return_value = {"QueryExecutionId": execution_id}
+        client.get_query_execution.return_value = {
+            "QueryExecution": {
+                "QueryExecutionId": execution_id,
+                "Status": {"State": state},
+            }
+        }
+        return client
+
+    def test_create_view_job_context_available(self, mock_emitter):
+        """CREATE VIEW 실행 중 job context가 정상적으로 유지되는지 검증"""
+        athena = self._make_athena_mock("view-001")
+        context_snapshot = {}
+
+        @datahub_job_fn("create-view-job", flow="daily-etl")
+        def run():
+            qid = athena.start_query_execution(
+                QueryString="CREATE VIEW sales_db.order_view AS SELECT * FROM sales_db.orders",
+                QueryExecutionContext={"Database": "sales_db"},
+                ResultConfiguration={"OutputLocation": "s3://results/"},
+            )["QueryExecutionId"]
+            wait_for_query(athena, qid)
+            context_snapshot["job"] = get_job()
+
+        run()
+
+        assert context_snapshot["job"] is not None
+        assert context_snapshot["job"].job_id == "create-view-job"
+        assert context_snapshot["job"].flow == "daily-etl"
+
+    def test_create_or_replace_view_job_context_available(self, mock_emitter):
+        """CREATE OR REPLACE VIEW 실행 중 job context가 정상적으로 유지되는지 검증"""
+        athena = self._make_athena_mock("view-002")
+        context_snapshot = {}
+
+        @datahub_job_fn("replace-view-job", flow="daily-etl")
+        def run():
+            qid = athena.start_query_execution(
+                QueryString="""
+                    CREATE OR REPLACE VIEW sales_db.daily_summary AS
+                    SELECT order_date, SUM(amount) AS total
+                    FROM sales_db.orders
+                    GROUP BY order_date
+                """,
+                QueryExecutionContext={"Database": "sales_db"},
+                ResultConfiguration={"OutputLocation": "s3://results/"},
+            )["QueryExecutionId"]
+            wait_for_query(athena, qid)
+            context_snapshot["job"] = get_job()
+
+        run()
+
+        assert context_snapshot["job"] is not None
+        assert context_snapshot["job"].job_id == "replace-view-job"
+
+    def test_failed_create_view_does_not_emit_lineage(self, mock_emitter):
+        """FAILED 상태의 CREATE VIEW 쿼리는 lineage를 emit하지 않음"""
+        athena = self._make_athena_mock("view-fail-001", state="FAILED")
+
+        @datahub_job_fn("failing-view-job", flow="daily-etl")
+        def run():
+            qid = athena.start_query_execution(
+                QueryString="CREATE OR REPLACE VIEW v AS SELECT * FROM orders",
+                QueryExecutionContext={"Database": "sales_db"},
+                ResultConfiguration={"OutputLocation": "s3://results/"},
+            )["QueryExecutionId"]
+            wait_for_query(athena, qid)
+
+        run()
+        time.sleep(0.1)
+
+        aspect_types = _aspect_types(mock_emitter)
+        assert "UpstreamLineageClass" not in aspect_types
+
+    def test_create_view_run_completes_successfully(self, mock_emitter):
+        """CREATE VIEW 실행 후 DataProcessInstance가 COMPLETE로 등록되는지 검증"""
+        athena = self._make_athena_mock("view-003")
+
+        @datahub_job_fn("view-complete-job", flow="daily-etl")
+        def run():
+            qid = athena.start_query_execution(
+                QueryString="CREATE VIEW summary_view AS SELECT * FROM orders JOIN users ON orders.user_id = users.id",
+                QueryExecutionContext={"Database": "sales_db"},
+                ResultConfiguration={"OutputLocation": "s3://results/"},
+            )["QueryExecutionId"]
+            wait_for_query(athena, qid)
+
+        run()
+        time.sleep(0.1)
+
+        from datahub.metadata.schema_classes import DataProcessRunStatusClass
+        run_events = [
+            c.args[0].aspect
+            for c in mock_emitter.emit.call_args_list
+            if type(c.args[0].aspect).__name__ == "DataProcessInstanceRunEventClass"
+        ]
+        states = [e.status for e in run_events]
+        assert DataProcessRunStatusClass.COMPLETE in states
+
+
+# ── 5. 혼합 사용 패턴 (SQLAlchemy + S3 + Athena) ──────────────────────────────
 
 class TestMixedUsage:
 

@@ -79,6 +79,40 @@ class TestUnloadStatements:
         assert "__s3__data-lake/transactions" in outputs
 
 
+class TestCreateViewStatements:
+    def test_create_view_simple(self):
+        sql = "CREATE VIEW order_view AS SELECT * FROM orders"
+        inputs, outputs = extract_tables(sql)
+        assert "order_view" in outputs
+        assert "orders" in inputs
+
+    def test_create_or_replace_view(self):
+        sql = "CREATE OR REPLACE VIEW sales_db.daily_summary AS SELECT order_date, SUM(amount) FROM sales_db.orders GROUP BY order_date"
+        inputs, outputs = extract_tables(sql)
+        assert "sales_db.daily_summary" in outputs
+        assert "sales_db.orders" in inputs
+
+    def test_create_view_with_schema(self):
+        sql = "CREATE VIEW analytics.report AS SELECT * FROM orders"
+        inputs, outputs = extract_tables(sql)
+        assert "analytics.report" in outputs
+        assert "orders" in inputs
+
+    def test_create_temp_view(self):
+        sql = "CREATE TEMP VIEW tmp_v AS SELECT a.id, b.name FROM tableA a JOIN tableB b ON a.id = b.id"
+        inputs, outputs = extract_tables(sql)
+        assert "tmp_v" in outputs
+        assert "tablea" in inputs
+        assert "tableb" in inputs
+
+    def test_create_or_replace_view_multi_join(self):
+        sql = "CREATE OR REPLACE VIEW analytics.report AS SELECT o.id, c.name FROM orders o LEFT JOIN customers c ON o.cid = c.id"
+        inputs, outputs = extract_tables(sql)
+        assert "analytics.report" in outputs
+        assert "orders" in inputs
+        assert "customers" in inputs
+
+
 class TestEdgeCases:
     def test_empty_sql(self):
         inputs, outputs = extract_tables("")
