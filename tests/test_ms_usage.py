@@ -75,9 +75,16 @@ def s3_client():
 
 @pytest.fixture(scope="session", autouse=True)
 def install_hooks():
-    """테스트 세션 전체에서 훅 1회 등록"""
+    """
+    테스트 세션 전체에서 훅 1회 등록.
+
+    yield를 with 블록 안에 두어야 세션 종료 시까지 patch가 유지됨.
+    yield 없이 with 블록이 닫히면 install_all_hooks 호출 직후 patch가 해제되어
+    _executor 백그라운드 스레드가 실제 DatahubRestEmitter로 localhost:8080 연결을 시도함.
+    """
     with patch("aileron_meta_collector.emitter.DatahubRestEmitter"):
         install_all_hooks(env="TEST")
+        yield  # 세션 종료 시까지 patch 유지
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
