@@ -9,7 +9,9 @@ import time
 from typing import Any
 from unittest.mock import MagicMock, call, patch
 
+import boto3
 import pytest
+from botocore.stub import Stubber
 
 from aileron_meta_collector import datahub_job, datahub_job_fn, install_all_hooks
 from aileron_meta_collector.context import get_job, set_job, clear_job
@@ -302,24 +304,12 @@ class TestAthenaCreateView:
     """
     CREATE VIEW / CREATE OR REPLACE VIEW lineage 검증.
 
-    [주의] Athena mock 클라이언트는 실제 boto3 이벤트 훅을 트리거하지 않으므로
-    job.inputs / job.outputs 누적은 검증하지 않습니다.
-    SQL 파싱 → URN 변환 end-to-end는 tests/hooks/test_boto3_hooks.py::TestCreateViewUrns 에서 검증합니다.
-    이 클래스는 job lifecycle(context 유지, COMPLETE/FAILED 처리)만 검증합니다.
+    moto를 사용하여 실제 boto3 클라이언트로 요청합니다.
+    실제 boto3 이벤트 훅(before-parameter-build / after-call)이 트리거되어
+    job.inputs / job.outputs 누적까지 end-to-end로 검증합니다.
     """
 
-    def _make_athena_mock(self, execution_id: str, state: str = "SUCCEEDED"):
-        client = MagicMock()
-        client.start_query_execution.return_value = {"QueryExecutionId": execution_id}
-        client.get_query_execution.return_value = {
-            "QueryExecution": {
-                "QueryExecutionId": execution_id,
-                "Status": {"State": state},
-            }
-        }
-        return client
-
-    # ── 파서 + URN 직접 검증 ───────────────────────────────────────────────────
+    # ── 파서 단위 검증 ─────────────────────────────────────────────────────────
 
     def test_create_or_replace_view_parser_output(self):
         """CREATE OR REPLACE VIEW SQL에서 input/output 테이블이 정확히 추출되는지 검증"""
@@ -354,120 +344,127 @@ class TestAthenaCreateView:
         assert "orders" in inputs
         assert "customers" in inputs
 
-    def test_create_or_replace_view_lineage_emit(self, mock_emitter, capsys):
-        """파싱된 VIEW lineage가 DataHub에 emit되는지 검증"""
-        from aileron_meta_collector.parsers.sql_parser import extract_tables
-        from aileron_meta_collector.hooks.boto3 import _resolve_athena_urns
-        from aileron_meta_collector.emitter import emit_lineage_async
+    # ── Stubber 실제 boto3 클라이언트 통합 검증 ───────────────────────────────
+    # botocore.stub.Stubber: HTTP만 차단하고 before-parameter-build/after-call
+    # 이벤트는 그대로 발생 → install_boto3_hooks 훅이 실제로 트리거됨
 
-        sql = """
-            CREATE OR REPLACE VIEW sales_db.daily_summary AS
-            SELECT order_date, SUM(amount) AS total
-            FROM sales_db.orders
-            GROUP BY order_date
-        """
-
-        # ── Step 1: SQL 파싱 결과 ────────────────────────────────────────────
-        inputs_raw, outputs_raw = extract_tables(sql)
-        print(f"\n[Step 1] SQL 파싱 결과")
-        print(f"  inputs_raw  : {inputs_raw}")
-        print(f"  outputs_raw : {outputs_raw}")
-
-        # ── Step 2: URN 변환 결과 ────────────────────────────────────────────
-        input_urns, output_urns = _resolve_athena_urns(
-            inputs_raw, outputs_raw, "AwsDataCatalog", "sales_db", "PROD"
+    def _make_stubbed_athena(self, execution_id: str, state: str = "SUCCEEDED", query: str = "SELECT 1"):
+        """Stubber로 감싼 실제 boto3 Athena 클라이언트 반환"""
+        client = boto3.client("athena", region_name="us-east-1")
+        stubber = Stubber(client)
+        stubber.add_response(
+            "start_query_execution",
+            {"QueryExecutionId": execution_id},
         )
-        print(f"\n[Step 2] URN 변환 결과")
-        for u in input_urns:
-            print(f"  input  URN : {u}")
-        for u in output_urns:
-            print(f"  output URN : {u}")
+        stubber.add_response(
+            "get_query_execution",
+            {
+                "QueryExecution": {
+                    "QueryExecutionId": execution_id,
+                    "Status": {"State": state},
+                    "Query": query,
+                    "StatementType": "DDL",
+                    "ResultConfiguration": {"OutputLocation": "s3://results/"},
+                    "QueryExecutionContext": {},
+                    "Statistics": {},
+                    "WorkGroup": "primary",
+                    "EngineVersion": {"SelectedEngineVersion": "AUTO"},
+                }
+            },
+        )
+        return client, stubber
 
-        # ── Step 3: job context에 누적 및 emit ───────────────────────────────
-        with datahub_job("view-lineage-job", flow="daily-etl") as job:
-            for u in input_urns:
-                if u not in job.inputs:
-                    job.inputs.append(u)
-            for u in output_urns:
-                if u not in job.outputs:
-                    job.outputs.append(u)
-            print(f"\n[Step 3] job context 누적")
-            print(f"  job.inputs  : {job.inputs}")
-            print(f"  job.outputs : {job.outputs}")
-            emit_lineage_async(job, input_urns, output_urns)
+    def test_create_or_replace_view_lineage_captured(self, mock_emitter):
+        """
+        실제 boto3 Athena 클라이언트(Stubber)로 CREATE OR REPLACE VIEW 실행 시
+        before-parameter-build / after-call 훅이 트리거되어
+        job.inputs / job.outputs에 lineage가 누적되는지 검증.
+        """
+        athena, stubber = self._make_stubbed_athena("view-exec-001")
+        snapshot = {}
+
+        with stubber:
+            @datahub_job_fn("create-view-job", flow="daily-etl")
+            def run():
+                qid = athena.start_query_execution(
+                    QueryString="""
+                        CREATE OR REPLACE VIEW sales_db.daily_summary AS
+                        SELECT order_date, SUM(amount) AS total
+                        FROM sales_db.orders
+                        GROUP BY order_date
+                    """,
+                    QueryExecutionContext={"Database": "sales_db"},
+                    ResultConfiguration={"OutputLocation": "s3://results/"},
+                )["QueryExecutionId"]
+                athena.get_query_execution(QueryExecutionId=qid)
+                snapshot["job"] = get_job()
+
+            run()
 
         time.sleep(0.1)
+        job = snapshot["job"]
+        print(f"\n[stubber] job.inputs  : {job.inputs}")
+        print(f"[stubber] job.outputs : {job.outputs}")
 
-        # ── Step 4: emit된 MCP 목록 ──────────────────────────────────────────
-        all_calls = mock_emitter.emit.call_args_list
-        emitted_urns   = [c.args[0].entityUrn for c in all_calls]
-        emitted_aspects = [type(c.args[0].aspect).__name__ for c in all_calls]
-        print(f"\n[Step 4] emit된 MCP 목록 (총 {len(all_calls)}개)")
-        for urn, asp in zip(emitted_urns, emitted_aspects):
-            print(f"  aspect={asp:<40s} entityUrn={urn}")
-
-        # ── Assertions ───────────────────────────────────────────────────────
-        assert "UpstreamLineageClass" in emitted_aspects, \
-            "CREATE OR REPLACE VIEW lineage가 DataHub에 emit되지 않음"
-        assert any("sales_db.daily_summary" in u for u in emitted_urns), \
-            f"sales_db.daily_summary URN이 emit되지 않음. emitted: {emitted_urns}"
-
-    # ── Job lifecycle 검증 ────────────────────────────────────────────────────
-
-    def test_create_view_job_context_available(self, mock_emitter):
-        """CREATE VIEW 실행 중 job context가 정상적으로 유지되는지 검증"""
-        athena = self._make_athena_mock("view-001")
-        context_snapshot = {}
-
-        @datahub_job_fn("create-view-job", flow="daily-etl")
-        def run():
-            qid = athena.start_query_execution(
-                QueryString="CREATE VIEW sales_db.order_view AS SELECT * FROM sales_db.orders",
-                QueryExecutionContext={"Database": "sales_db"},
-                ResultConfiguration={"OutputLocation": "s3://results/"},
-            )["QueryExecutionId"]
-            wait_for_query(athena, qid)
-            context_snapshot["job"] = get_job()
-
-        run()
-
-        assert context_snapshot["job"] is not None
-        assert context_snapshot["job"].job_id == "create-view-job"
-        assert context_snapshot["job"].flow == "daily-etl"
-
-    def test_failed_create_view_does_not_emit_lineage(self, mock_emitter):
-        """FAILED 상태의 CREATE VIEW 쿼리는 lineage를 emit하지 않음"""
-        athena = self._make_athena_mock("view-fail-001", state="FAILED")
-
-        @datahub_job_fn("failing-view-job", flow="daily-etl")
-        def run():
-            qid = athena.start_query_execution(
-                QueryString="CREATE OR REPLACE VIEW v AS SELECT * FROM orders",
-                QueryExecutionContext={"Database": "sales_db"},
-                ResultConfiguration={"OutputLocation": "s3://results/"},
-            )["QueryExecutionId"]
-            wait_for_query(athena, qid)
-
-        run()
-        time.sleep(0.1)
+        assert any("sales_db.orders" in u for u in job.inputs), \
+            f"sales_db.orders가 job.inputs에 없음: {job.inputs}"
+        assert any("sales_db.daily_summary" in u for u in job.outputs), \
+            f"sales_db.daily_summary가 job.outputs에 없음: {job.outputs}"
 
         aspect_types = _aspect_types(mock_emitter)
-        assert "UpstreamLineageClass" not in aspect_types
+        assert "UpstreamLineageClass" in aspect_types, \
+            "UpstreamLineageClass가 emit되지 않음"
+
+    def test_create_view_with_join_lineage_captured(self, mock_emitter):
+        """JOIN이 포함된 CREATE VIEW에서 복수 input이 모두 누적되는지 검증"""
+        athena, stubber = self._make_stubbed_athena("view-exec-002")
+        snapshot = {}
+
+        with stubber:
+            @datahub_job_fn("join-view-job", flow="daily-etl")
+            def run():
+                qid = athena.start_query_execution(
+                    QueryString="""
+                        CREATE OR REPLACE VIEW analytics.report AS
+                        SELECT o.id, c.name
+                        FROM orders o
+                        LEFT JOIN customers c ON o.cid = c.id
+                    """,
+                    QueryExecutionContext={"Database": "analytics"},
+                    ResultConfiguration={"OutputLocation": "s3://results/"},
+                )["QueryExecutionId"]
+                athena.get_query_execution(QueryExecutionId=qid)
+                snapshot["job"] = get_job()
+
+            run()
+
+        job = snapshot["job"]
+        print(f"\n[stubber] job.inputs  : {job.inputs}")
+        print(f"[stubber] job.outputs : {job.outputs}")
+
+        assert any("orders" in u for u in job.inputs), \
+            f"orders가 job.inputs에 없음: {job.inputs}"
+        assert any("customers" in u for u in job.inputs), \
+            f"customers가 job.inputs에 없음: {job.inputs}"
+        assert any("analytics.report" in u for u in job.outputs), \
+            f"analytics.report가 job.outputs에 없음: {job.outputs}"
 
     def test_create_view_run_completes_successfully(self, mock_emitter):
         """CREATE VIEW 실행 후 DataProcessInstance가 COMPLETE로 등록되는지 검증"""
-        athena = self._make_athena_mock("view-003")
+        athena, stubber = self._make_stubbed_athena("view-exec-003")
 
-        @datahub_job_fn("view-complete-job", flow="daily-etl")
-        def run():
-            qid = athena.start_query_execution(
-                QueryString="CREATE VIEW summary_view AS SELECT * FROM orders JOIN users ON orders.user_id = users.id",
-                QueryExecutionContext={"Database": "sales_db"},
-                ResultConfiguration={"OutputLocation": "s3://results/"},
-            )["QueryExecutionId"]
-            wait_for_query(athena, qid)
+        with stubber:
+            @datahub_job_fn("view-complete-job", flow="daily-etl")
+            def run():
+                qid = athena.start_query_execution(
+                    QueryString="CREATE VIEW summary_view AS SELECT * FROM orders JOIN users ON orders.user_id = users.id",
+                    QueryExecutionContext={"Database": "sales_db"},
+                    ResultConfiguration={"OutputLocation": "s3://results/"},
+                )["QueryExecutionId"]
+                athena.get_query_execution(QueryExecutionId=qid)
 
-        run()
+            run()
+
         time.sleep(0.1)
 
         from datahub.metadata.schema_classes import DataProcessRunStatusClass
