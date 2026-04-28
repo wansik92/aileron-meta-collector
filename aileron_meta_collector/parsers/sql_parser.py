@@ -17,6 +17,11 @@ _RE_CTAS = re.compile(
     r"CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)",
     re.IGNORECASE,
 )
+# CREATE [OR REPLACE] VIEW <name> AS SELECT
+_RE_CREATE_VIEW = re.compile(
+    r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:FORCE\s+)?(?:TEMP(?:ORARY)?\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)",
+    re.IGNORECASE,
+)
 # AS SELECT ... 이후 본문 추출
 _RE_CTAS_BODY = re.compile(r"\bAS\s+(SELECT\b.+)$", re.IGNORECASE | re.DOTALL)
 
@@ -50,6 +55,10 @@ def extract_tables(sql: str) -> tuple[list[str], list[str]]:
 
     stmt = parsed[0]
     op = _get_stmt_type(stmt)
+
+    # ── CREATE VIEW / CREATE OR REPLACE VIEW ────────────────────────────────
+    if op == "CREATE" and _RE_CREATE_VIEW.search(stripped):
+        return _parse_create_view(stripped)
 
     # ── CTAS / CREATE EXTERNAL TABLE AS SELECT ───────────────────────────────
     if op == "CREATE":
@@ -86,6 +95,27 @@ def _parse_unload(sql: str) -> tuple[list[str], list[str]]:
         s3_path = to_match.group(1).rstrip("/").replace("s3://", "")
         outputs.append(f"__s3__{s3_path}")
 
+    return inputs, outputs
+
+
+# ── CREATE VIEW ───────────────────────────────────────────────────────────────
+
+def _parse_create_view(sql: str) -> tuple[list[str], list[str]]:
+    """CREATE [OR REPLACE] [TEMP] VIEW <name> AS SELECT ..."""
+    output_view = ""
+    m = _RE_CREATE_VIEW.search(sql)
+    if m:
+        output_view = _normalize(m.group(1))
+
+    body_match = _RE_CTAS_BODY.search(sql)
+    inputs: list[str] = []
+    if body_match:
+        select_body = body_match.group(1)
+        sub_parsed = sqlparse.parse(select_body)
+        if sub_parsed:
+            inputs = _dedupe(_collect_from_tables(sub_parsed[0]))
+
+    outputs = [output_view] if output_view else []
     return inputs, outputs
 
 
@@ -211,7 +241,10 @@ def _get_stmt_type(stmt: sqlparse.sql.Statement) -> str:
         if token.ttype is DML:
             return token.normalized.upper()
         if token.ttype is DDL:
-            return token.normalized.upper()
+            # sqlparse가 "CREATE OR REPLACE" 를 DDL 토큰 하나로 묶는 경우 처리
+            normalized = token.normalized.upper()
+            first_word = normalized.split()[0]
+            return first_word  # "CREATE", "ALTER", "DROP" 등
         if token.ttype is Keyword and token.normalized.upper() == "CREATE":
             return "CREATE"
     return ""
