@@ -25,6 +25,8 @@ class JobContext:
     upstream_job_ids: list[str] = field(default_factory=list)   # DataJob 간 의존 관계
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     start_time_ms: int = field(default_factory=lambda: int(time.time() * 1000))
+    description: str | None = None        # DataJob description
+    flow_description: str | None = None   # DataFlow description
 
 
 def set_job(
@@ -32,12 +34,16 @@ def set_job(
     flow: str = "default",
     platform: str = "pythonSdk",
     upstream_jobs: list[str] | None = None,
+    description: str | None = None,
+    flow_description: str | None = None,
 ) -> None:
     _local.job = JobContext(
         job_id=job_id,
         flow=flow,
         platform=platform,
         upstream_job_ids=upstream_jobs or [],
+        description=description,
+        flow_description=flow_description,
     )
 
 
@@ -55,6 +61,8 @@ def datahub_job(
     flow: str = "default",
     platform: str = "pythonSdk",
     upstream_jobs: list[str] | None = None,
+    description: str | None = None,
+    flow_description: str | None = None,
 ) -> Generator[JobContext, None, None]:
     from .config import DATAHUB_ENV
     from .emitter import (
@@ -64,7 +72,8 @@ def datahub_job(
         emit_run_start_async,
     )
 
-    set_job(job_id, flow, platform, upstream_jobs=upstream_jobs)
+    set_job(job_id, flow, platform, upstream_jobs=upstream_jobs,
+            description=description, flow_description=flow_description)
     job = get_job()
 
     logger.info("[aileron] job started  | flow=%s  job=%s  run=%s", flow, job_id, job.run_id[:8])
@@ -100,6 +109,8 @@ def datahub_job_fn(
     flow: str = "default",
     platform: str = "pythonSdk",
     upstream_jobs: list[str] | None = None,
+    description: str | None = None,
+    flow_description: str | None = None,
 ) -> Callable[[F], F]:
     """
     함수 단위 lineage 수집 데코레이터.
@@ -124,7 +135,9 @@ def datahub_job_fn(
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             with datahub_job(job_id, flow=flow, platform=platform,
-                             upstream_jobs=upstream_jobs):
+                             upstream_jobs=upstream_jobs,
+                             description=description,
+                             flow_description=flow_description):
                 return func(*args, **kwargs)
         return wrapper  # type: ignore[return-value]
     return decorator

@@ -80,6 +80,7 @@ def add_input(
     platform: str | None = None,
     urn: str | None = None,
     env: str | None = None,
+    description: str | None = None,
 ) -> None:
     """
     현재 job context에 input dataset을 수동으로 추가합니다.
@@ -112,6 +113,9 @@ def add_input(
     if resolved not in job.inputs:
         job.inputs.append(resolved)
         logger.debug("manual input added: %s", resolved)
+    if description:
+        from .emitter import emit_dataset_description_async
+        emit_dataset_description_async(resolved, description)
 
 
 def add_output(
@@ -120,6 +124,7 @@ def add_output(
     platform: str | None = None,
     urn: str | None = None,
     env: str | None = None,
+    description: str | None = None,
 ) -> None:
     """
     현재 job context에 output dataset을 수동으로 추가합니다.
@@ -149,6 +154,9 @@ def add_output(
     if resolved not in job.outputs:
         job.outputs.append(resolved)
         logger.debug("manual output added: %s", resolved)
+    if description:
+        from .emitter import emit_dataset_description_async
+        emit_dataset_description_async(resolved, description)
 
 
 # ── Job context 없이 즉시 emit ────────────────────────────────────────────────
@@ -158,6 +166,7 @@ def emit_lineage(
     outputs: list[str],
     platform: str | None = None,
     env: str | None = None,
+    descriptions: dict[str, str] | None = None,
 ) -> None:
     """
     job context 없이 dataset 간 lineage를 즉시 DataHub에 전송합니다.
@@ -214,6 +223,16 @@ def emit_lineage(
     # emit_lineage_async는 JobContext가 필요하므로 임시 context 생성
     dummy_job = JobContext(job_id="__manual__", flow="__manual__")
     emit_lineage_async(dummy_job, input_urns, output_urns)
+
+    # dataset description 처리 — key: 원본 table명 또는 URN
+    if descriptions:
+        from .emitter import emit_dataset_description_async
+        all_pairs = list(zip(inputs, input_urns)) + list(zip(outputs, output_urns))
+        for original, resolved_urn in all_pairs:
+            desc = descriptions.get(original) or descriptions.get(resolved_urn)
+            if desc:
+                emit_dataset_description_async(resolved_urn, desc)
+
     logger.debug("manual lineage emitted: %s → %s", input_urns, output_urns)
 
 

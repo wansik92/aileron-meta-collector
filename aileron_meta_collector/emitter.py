@@ -26,6 +26,7 @@ try:
         UpstreamClass,
         UpstreamLineageClass,
     )
+    from datahub.metadata.schema_classes import DatasetPropertiesClass
     _DATAHUB_AVAILABLE = True
 except ImportError:
     _DATAHUB_AVAILABLE = False
@@ -110,6 +111,30 @@ def _emit_lineage(input_urns: list[str], output_urns: list[str]) -> None:
             raise
 
 
+# ── Dataset Description ───────────────────────────────────────────────────────
+
+def emit_dataset_description_async(urn: str, description: str) -> None:
+    if not description:
+        return
+    _executor.submit(_emit_dataset_description, urn, description)
+
+
+def _emit_dataset_description(urn: str, description: str) -> None:
+    try:
+        _check_datahub()
+        emitter = _get_emitter()
+        emitter.emit(MetadataChangeProposalWrapper(
+            entityUrn=urn,
+            aspect=DatasetPropertiesClass(description=description),
+        ))
+        logger.debug("Dataset description emitted: %s", urn)
+    except Exception:
+        if DATAHUB_SILENT_FAIL:
+            logger.warning("Dataset description emit failed (silent)", exc_info=True)
+        else:
+            raise
+
+
 # ── DataFlow ──────────────────────────────────────────────────────────────────
 
 def emit_dataflow_async(job: JobContext, env: str) -> None:
@@ -122,7 +147,11 @@ def _emit_dataflow(job: JobContext, env: str) -> None:
         emitter = _get_emitter()
         emitter.emit(MetadataChangeProposalWrapper(
             entityUrn=_flow_urn(job, env),
-            aspect=DataFlowInfoClass(name=job.flow, env=env),
+            aspect=DataFlowInfoClass(
+                name=job.flow,
+                env=env,
+                description=job.flow_description,
+            ),
         ))
         logger.debug("DataFlow emitted: %s", job.flow)
     except Exception:
@@ -144,7 +173,12 @@ def _emit_datajob(job: JobContext, env: str) -> None:
         emitter = _get_emitter()
         emitter.emit(MetadataChangeProposalWrapper(
             entityUrn=_job_urn(job, env),
-            aspect=DataJobInfoClass(name=job.job_id, flowUrn=_flow_urn(job, env), type="PYTHON"),
+            aspect=DataJobInfoClass(
+                name=job.job_id,
+                flowUrn=_flow_urn(job, env),
+                type="PYTHON",
+                description=job.description,
+            ),
         ))
         logger.debug("DataJob emitted: %s", job.job_id)
     except Exception:
