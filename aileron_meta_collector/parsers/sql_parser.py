@@ -218,7 +218,7 @@ def _get_stmt_type(stmt: sqlparse.sql.Statement) -> str:
 
 
 def _normalize(name: str) -> str:
-    return name.strip('"').strip("'").strip("`").lower()
+    return name.strip().strip('"').strip("'").strip("`").strip().lower()
 
 
 def _dedupe(tables: list[str]) -> list[str]:

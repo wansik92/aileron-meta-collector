@@ -47,6 +47,8 @@ def _athena_table_urn(table: str, catalog: str, database: str, env: str) -> str:
     - database.table     → 그대로 사용
     - catalog.db.table   → catalog 제거 후 database.table
     """
+    table    = table.strip()
+    database = database.strip()
     parts = table.split(".")
     if len(parts) == 1:
         dataset = f"{database}.{table}"
@@ -55,6 +57,7 @@ def _athena_table_urn(table: str, catalog: str, database: str, env: str) -> str:
     else:
         # catalog.database.table → database.table
         dataset = ".".join(parts[1:])
+    dataset = dataset.strip()
     return f"urn:li:dataset:(urn:li:dataPlatform:glue,{dataset},{env})"
 
 
@@ -157,9 +160,9 @@ def install_boto3_hooks(env: str = "PROD") -> None:
             return
         ctx = params.get("QueryExecutionContext", {})
         _athena_req_local.pending = _PendingAthenaQuery(
-            sql=params.get("QueryString", ""),
-            database=ctx.get("Database", "default"),
-            catalog=ctx.get("Catalog", "AwsDataCatalog"),
+            sql=params.get("QueryString", "").strip(),
+            database=ctx.get("Database", "default").strip(),
+            catalog=ctx.get("Catalog", "AwsDataCatalog").strip(),
             job=job,
         )
 
