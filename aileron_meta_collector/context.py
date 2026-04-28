@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import logging
 import threading
 import time
 import uuid
@@ -11,6 +12,7 @@ from typing import Callable, Generator, Optional, TypeVar
 F = TypeVar("F", bound=Callable)
 
 _local = threading.local()
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -65,14 +67,28 @@ def datahub_job(
     set_job(job_id, flow, platform, upstream_jobs=upstream_jobs)
     job = get_job()
 
+    logger.info("[aileron] job started  | flow=%s  job=%s  run=%s", flow, job_id, job.run_id[:8])
+
     emit_dataflow_async(job, DATAHUB_ENV)
     emit_datajob_async(job, DATAHUB_ENV)
     emit_run_start_async(job, DATAHUB_ENV)
 
     try:
         yield job
+        elapsed = int(time.time() * 1000) - job.start_time_ms
+        logger.info(
+            "[aileron] job finished | flow=%s  job=%s  run=%s  elapsed=%dms  inputs=%d  outputs=%d",
+            flow, job_id, job.run_id[:8], elapsed, len(job.inputs), len(job.outputs),
+        )
+        logger.debug("[aileron] inputs  : %s", job.inputs)
+        logger.debug("[aileron] outputs : %s", job.outputs)
         emit_run_end_async(job, DATAHUB_ENV, success=True)
     except Exception as e:
+        elapsed = int(time.time() * 1000) - job.start_time_ms
+        logger.warning(
+            "[aileron] job failed   | flow=%s  job=%s  run=%s  elapsed=%dms  error=%s",
+            flow, job_id, job.run_id[:8], elapsed, e,
+        )
         emit_run_end_async(job, DATAHUB_ENV, success=False, error_msg=str(e))
         raise
     finally:

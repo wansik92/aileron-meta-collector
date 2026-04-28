@@ -123,6 +123,7 @@ def install_boto3_hooks(env: str = "PROD") -> None:
                         job.inputs.append(src_urn)
                     if dst_urn not in job.outputs:
                         job.outputs.append(dst_urn)
+                    logger.debug("[aileron] S3 CopyObject | src=%s  dst=%s", src_urn, dst_urn)
                     emit_lineage_async(job, [src_urn], [dst_urn])
                 return
 
@@ -133,14 +134,16 @@ def install_boto3_hooks(env: str = "PROD") -> None:
             if operation in _S3_READ_OPS:
                 if urn not in job.inputs:
                     job.inputs.append(urn)
+                    logger.debug("[aileron] S3 input  | op=%s  urn=%s", operation, urn)
                 emit_lineage_async(job, [urn], [])
             elif operation in _S3_WRITE_OPS:
                 if urn not in job.outputs:
                     job.outputs.append(urn)
+                    logger.debug("[aileron] S3 output | op=%s  urn=%s", operation, urn)
                 emit_lineage_async(job, [], [urn])
 
         except Exception:
-            logger.debug("boto3 S3 lineage hook error", exc_info=True)
+            logger.warning("[aileron] S3 lineage hook 오류 | event=%s", event_name, exc_info=True)
 
     for op in _S3_READ_OPS | _S3_WRITE_OPS:
         events.register(f"before-parameter-build.s3.{op}", _handle_s3)
@@ -156,14 +159,21 @@ def install_boto3_hooks(env: str = "PROD") -> None:
     def _athena_before_start(params: dict, **kwargs):
         job = get_job()
         if not job:
+            logger.debug("[aileron] Athena StartQueryExecution — job context 없음, lineage 수집 skip")
             _athena_req_local.pending = None
             return
         ctx = params.get("QueryExecutionContext", {})
+        sql = params.get("QueryString", "").strip()
+        database = ctx.get("Database", "default").strip()
         _athena_req_local.pending = _PendingAthenaQuery(
-            sql=params.get("QueryString", "").strip(),
-            database=ctx.get("Database", "default").strip(),
+            sql=sql,
+            database=database,
             catalog=ctx.get("Catalog", "AwsDataCatalog").strip(),
             job=job,
+        )
+        logger.debug(
+            "[aileron] Athena SQL 캡처 | job=%s  database=%s  sql=%.120s",
+            job.job_id, database, sql.replace("\n", " "),
         )
 
     def _athena_after_start(parsed_response: dict = None, parsed: dict = None, **kwargs):
@@ -175,9 +185,11 @@ def install_boto3_hooks(env: str = "PROD") -> None:
             return
         execution_id = response.get("QueryExecutionId", "")
         if not execution_id:
+            logger.debug("[aileron] Athena StartQueryExecution — execution_id 없음")
             return
         with _pending_athena_lock:
             _pending_athena[execution_id] = pending
+        logger.debug("[aileron] Athena pending 등록 | execution_id=%s  job=%s", execution_id, pending.job.job_id)
 
     def _athena_after_get_execution(parsed_response: dict = None, parsed: dict = None, **kwargs):
         # botocore < 1.40: parsed_response / botocore >= 1.40: parsed
@@ -187,6 +199,7 @@ def install_boto3_hooks(env: str = "PROD") -> None:
         execution_id = execution.get("QueryExecutionId", "")
 
         if state in ("RUNNING", "QUEUED", ""):
+            logger.debug("[aileron] Athena 진행 중 | execution_id=%s  state=%s", execution_id, state)
             return  # 아직 진행 중 — pending 유지
 
         with _pending_athena_lock:
@@ -196,11 +209,18 @@ def install_boto3_hooks(env: str = "PROD") -> None:
             return
 
         if state != "SUCCEEDED":
-            logger.debug("Athena query %s ended with state=%s — lineage skipped", execution_id, state)
+            logger.warning(
+                "[aileron] Athena lineage skip | execution_id=%s  state=%s  job=%s",
+                execution_id, state, pending.job.job_id,
+            )
             return
 
         try:
             inputs_raw, outputs_raw = extract_tables(pending.sql)
+            logger.debug(
+                "[aileron] Athena SQL 파싱 결과 | execution_id=%s  inputs_raw=%s  outputs_raw=%s",
+                execution_id, inputs_raw, outputs_raw,
+            )
             input_urns, output_urns = _resolve_athena_urns(
                 inputs_raw, outputs_raw, pending.catalog, pending.database, env
             )
@@ -212,10 +232,14 @@ def install_boto3_hooks(env: str = "PROD") -> None:
                 if u not in pending.job.outputs:
                     pending.job.outputs.append(u)
 
+            logger.info(
+                "[aileron] Athena lineage emit | execution_id=%s  job=%s  inputs=%s  outputs=%s",
+                execution_id, pending.job.job_id, input_urns, output_urns,
+            )
             emit_lineage_async(pending.job, input_urns, output_urns)
 
         except Exception:
-            logger.debug("Athena lineage emit error", exc_info=True)
+            logger.warning("[aileron] Athena lineage emit 오류 | execution_id=%s", execution_id, exc_info=True)
 
     # before-parameter-build: 원본 API 파라미터(QueryString 등)가 살아있는 시점
     # before-call: 이미 HTTP 직렬화된 이후라 QueryString 없음

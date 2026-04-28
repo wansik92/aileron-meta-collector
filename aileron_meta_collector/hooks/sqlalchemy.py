@@ -63,8 +63,16 @@ def install_sqlalchemy_hooks(env: str = "PROD") -> None:
             platform = _infer_platform(db_url)
             inputs_raw, outputs_raw = extract_tables(statement)
 
+            if not inputs_raw and not outputs_raw:
+                return
+
             input_urns = [_to_urn(t, platform, env) for t in inputs_raw]
             output_urns = [_to_urn(t, platform, env) for t in outputs_raw]
+
+            logger.debug(
+                "[aileron] SQLAlchemy lineage | job=%s  platform=%s  inputs=%s  outputs=%s",
+                job.job_id, platform, input_urns, output_urns,
+            )
 
             # job context에 누적 (중복 방지)
             for u in input_urns:
@@ -77,6 +85,6 @@ def install_sqlalchemy_hooks(env: str = "PROD") -> None:
             emit_lineage_async(job, input_urns, output_urns)
 
         except Exception:
-            logger.debug("SQLAlchemy lineage hook error", exc_info=True)
+            logger.warning("[aileron] SQLAlchemy lineage hook 오류", exc_info=True)
 
     logger.info("[aileron] SQLAlchemy hooks installed (env=%s)", env)
