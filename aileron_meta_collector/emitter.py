@@ -37,7 +37,19 @@ from .context import JobContext
 
 logger = logging.getLogger(__name__)
 
-_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aileron-emit")
+_EMIT_MAX_WORKERS = 2
+_executor = ThreadPoolExecutor(max_workers=_EMIT_MAX_WORKERS, thread_name_prefix="aileron-emit")
+
+
+def flush_emit(timeout: float = 30.0) -> None:
+    """모든 비동기 emit 작업이 완료될 때까지 블로킹합니다.
+
+    max_workers 개수만큼 sentinel future를 제출하고 완료를 기다립니다.
+    이렇게 하면 큐에 앞서 제출된 모든 작업이 완료된 뒤 sentinel이 실행됩니다.
+    """
+    futs = [_executor.submit(lambda: None) for _ in range(_EMIT_MAX_WORKERS)]
+    for f in futs:
+        f.result(timeout=timeout)
 
 
 def _check_datahub() -> None:
@@ -90,6 +102,14 @@ def _emit_lineage(input_urns: list[str], output_urns: list[str]) -> None:
         _check_datahub()
         emitter = _get_emitter()
         audit = AuditStampClass(time=int(time.time() * 1000), actor="urn:li:corpuser:datahub")
+
+        # input dataset stub entity 생성 — entity가 없으면 DataJob upstream 연결이 UI에 표시되지 않음
+        for input_urn in input_urns:
+            emitter.emit(MetadataChangeProposalWrapper(
+                entityUrn=input_urn,
+                aspect=DatasetPropertiesClass(),
+            ))
+            logger.debug("input dataset stub emitted: %s", input_urn)
 
         for output_urn in output_urns:
             upstreams = [
