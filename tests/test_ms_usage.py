@@ -354,7 +354,7 @@ class TestAthenaCreateView:
         assert "orders" in inputs
         assert "customers" in inputs
 
-    def test_create_or_replace_view_lineage_emit(self, mock_emitter):
+    def test_create_or_replace_view_lineage_emit(self, mock_emitter, capsys):
         """파싱된 VIEW lineage가 DataHub에 emit되는지 검증"""
         from aileron_meta_collector.parsers.sql_parser import extract_tables
         from aileron_meta_collector.hooks.boto3 import _resolve_athena_urns
@@ -366,11 +366,24 @@ class TestAthenaCreateView:
             FROM sales_db.orders
             GROUP BY order_date
         """
+
+        # ── Step 1: SQL 파싱 결과 ────────────────────────────────────────────
         inputs_raw, outputs_raw = extract_tables(sql)
+        print(f"\n[Step 1] SQL 파싱 결과")
+        print(f"  inputs_raw  : {inputs_raw}")
+        print(f"  outputs_raw : {outputs_raw}")
+
+        # ── Step 2: URN 변환 결과 ────────────────────────────────────────────
         input_urns, output_urns = _resolve_athena_urns(
             inputs_raw, outputs_raw, "AwsDataCatalog", "sales_db", "PROD"
         )
+        print(f"\n[Step 2] URN 변환 결과")
+        for u in input_urns:
+            print(f"  input  URN : {u}")
+        for u in output_urns:
+            print(f"  output URN : {u}")
 
+        # ── Step 3: job context에 누적 및 emit ───────────────────────────────
         with datahub_job("view-lineage-job", flow="daily-etl") as job:
             for u in input_urns:
                 if u not in job.inputs:
@@ -378,15 +391,24 @@ class TestAthenaCreateView:
             for u in output_urns:
                 if u not in job.outputs:
                     job.outputs.append(u)
+            print(f"\n[Step 3] job context 누적")
+            print(f"  job.inputs  : {job.inputs}")
+            print(f"  job.outputs : {job.outputs}")
             emit_lineage_async(job, input_urns, output_urns)
 
         time.sleep(0.1)
 
-        aspect_types = _aspect_types(mock_emitter)
-        assert "UpstreamLineageClass" in aspect_types, \
-            "CREATE OR REPLACE VIEW lineage가 DataHub에 emit되지 않음"
+        # ── Step 4: emit된 MCP 목록 ──────────────────────────────────────────
+        all_calls = mock_emitter.emit.call_args_list
+        emitted_urns   = [c.args[0].entityUrn for c in all_calls]
+        emitted_aspects = [type(c.args[0].aspect).__name__ for c in all_calls]
+        print(f"\n[Step 4] emit된 MCP 목록 (총 {len(all_calls)}개)")
+        for urn, asp in zip(emitted_urns, emitted_aspects):
+            print(f"  aspect={asp:<40s} entityUrn={urn}")
 
-        emitted_urns = [c.args[0].entityUrn for c in mock_emitter.emit.call_args_list]
+        # ── Assertions ───────────────────────────────────────────────────────
+        assert "UpstreamLineageClass" in emitted_aspects, \
+            "CREATE OR REPLACE VIEW lineage가 DataHub에 emit되지 않음"
         assert any("sales_db.daily_summary" in u for u in emitted_urns), \
             f"sales_db.daily_summary URN이 emit되지 않음. emitted: {emitted_urns}"
 
