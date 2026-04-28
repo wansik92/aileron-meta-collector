@@ -544,9 +544,11 @@ from aileron_meta_collector import datahub_job_fn, add_input, add_output
 @datahub_job_fn("my-etl-job", flow="daily-pipeline")
 def run():
     # 자동 훅과 병행 — 훅이 감지 못한 외부 시스템 데이터셋을 수동으로 추가
-    add_input("external_db.raw_events", platform="postgres")   # DB 테이블
-    add_input("s3://raw-bucket/feeds/", platform="s3")         # S3 경로
-    add_output("sales_db.processed_events", platform="glue")   # Glue 테이블
+    add_input("external_db.raw_events", platform="postgres",
+              description="외부 시스템 원시 이벤트 테이블")
+    add_input("s3://raw-bucket/feeds/", platform="s3")
+    add_output("sales_db.processed_events", platform="glue",
+               description="처리된 이벤트 집계 테이블")
 
     # URN을 직접 지정할 수도 있음
     add_input(urn="urn:li:dataset:(urn:li:dataPlatform:snowflake,prod.sales.orders,PROD)")
@@ -572,11 +574,15 @@ emit_lineage(
     outputs=["urn:li:dataset:(urn:li:dataPlatform:s3,my-bucket/out,PROD)"],
 )
 
-# 혼합 방식 (URN + 테이블명)
+# dataset description 추가 (key: 테이블명 또는 URN)
 emit_lineage(
-    inputs=["urn:li:dataset:(urn:li:dataPlatform:glue,sales_db.orders,PROD)"],
-    outputs=["my-bucket/result/dt=2024-01-15"],
-    platform="s3",
+    inputs=["sales_db.orders"],
+    outputs=["sales_db.order_summary"],
+    platform="glue",
+    descriptions={
+        "sales_db.orders":       "원시 주문 테이블",
+        "sales_db.order_summary": "일별 주문 집계 결과",
+    },
 )
 ```
 
@@ -596,109 +602,10 @@ urn = build_dataset_urn("s3://my-bucket/data/events/", "s3", env="DEV")
 
 | API | 용도 |
 |-----|------|
-| `add_input(table, platform)` | job context 내에서 input dataset 추가 |
-| `add_output(table, platform)` | job context 내에서 output dataset 추가 |
-| `emit_lineage(inputs, outputs, platform)` | job context 없이 즉시 lineage emit |
+| `add_input(table, platform, description)` | job context 내에서 input dataset 추가 |
+| `add_output(table, platform, description)` | job context 내에서 output dataset 추가 |
+| `emit_lineage(inputs, outputs, platform, descriptions)` | job context 없이 즉시 lineage emit |
 | `build_dataset_urn(table, platform, env)` | URN 문자열만 생성 |
-
----
-
-### 클래스 상속 구조에서의 사용 패턴
-
-#### 부모 클래스에서 훅 등록 (1회만 실행)
-
-`install_all_hooks()`는 이벤트 시스템에 핸들러를 **등록**하는 동작이므로,  
-인스턴스를 여러 개 생성할 경우 중복 등록될 수 있습니다.  
-부모 클래스 `__init__`에서 클래스 변수로 guard 처리하면 안전합니다.
-
-```python
-from aileron_meta_collector import install_all_hooks
-
-class BaseJob:
-    _hooks_installed = False  # 클래스 변수 — 모든 인스턴스가 공유
-
-    def __init__(self, env: str = "PROD"):
-        if not BaseJob._hooks_installed:
-            install_all_hooks(env=env)
-            BaseJob._hooks_installed = True
-
-    def run(self):
-        raise NotImplementedError
-
-
-class OrderJob(BaseJob):
-    def __init__(self):
-        super().__init__(env="PROD")  # 훅은 최초 1회만 등록됨
-
-    def run(self):
-        ...
-
-
-job1 = OrderJob()  # 훅 등록 (1회)
-job2 = OrderJob()  # 이미 등록됨 → skip
-```
-
----
-
-#### 공통 함수에 job context 적용하기
-
-`createTempTable` 같은 공통 함수는 여러 곳에서 재사용되기 때문에  
-함수 정의부에 `@datahub_job_fn`을 붙이기 어렵습니다.  
-이 경우 **호출부를 context manager로 감싸는** 방식을 사용합니다.
-
-```python
-class BaseJob:
-    def createTempTable(self, sql: str, database: str, table: str):
-        # 공통 함수 — 데코레이터 없이 그대로 유지
-        athena.start_query_execution(
-            QueryString=sql,
-            QueryExecutionContext={"Database": database},
-            ResultConfiguration={"OutputLocation": "s3://results/"},
-        )
-```
-
-```python
-from aileron_meta_collector import datahub_job
-
-job = MyJob()
-
-# 호출마다 다른 DataFlow / DataJob 지정 가능
-with datahub_job("job-create-order", flow="order-pipeline"):
-    job.createTempTable(sql1, "sales_db", "order_summary")
-
-with datahub_job("job-create-user", flow="user-pipeline"):
-    job.createTempTable(sql2, "user_db", "user_stats")
-```
-
-호출부가 많은 경우, 래퍼 메서드를 만들면 반복을 줄일 수 있습니다:
-
-```python
-class BaseJob:
-    def createTempTable(self, sql: str, database: str, table: str):
-        # 공통 함수 — 변경 없음
-        ...
-
-    def createTempTableWithLineage(
-        self, sql: str, database: str, table: str,
-        *, job_id: str, flow: str
-    ):
-        """lineage가 필요한 호출에만 사용하는 래퍼"""
-        with datahub_job(job_id, flow=flow):
-            self.createTempTable(sql, database, table)
-```
-
-```python
-job.createTempTableWithLineage(
-    sql1, "sales_db", "order_summary",
-    job_id="job-order", flow="order-pipeline",
-)
-job.createTempTableWithLineage(
-    sql2, "user_db", "user_stats",
-    job_id="job-user", flow="user-pipeline",
-)
-```
-
-> **요약**: 공통 함수 자체는 변경하지 않고, lineage가 필요한 **호출부만** context manager로 감쌉니다.
 
 ---
 
