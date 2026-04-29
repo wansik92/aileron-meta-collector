@@ -1,7 +1,10 @@
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from unittest.mock import MagicMock, patch
 
-from aileron_meta_collector.context import datahub_job, get_job
+from aileron_meta_collector.context import datahub_job, get_job, propagate_job
 from aileron_meta_collector.hooks.boto3 import (
     _s3_urn,
     _athena_table_urn,
@@ -189,3 +192,72 @@ class TestJobContext:
 
         for i in range(3):
             assert results[f"job-{i}"] == f"job-{i}"
+
+
+class TestPropagateJob:
+
+    def test_worker_thread_has_no_job_without_propagate(self):
+        """propagate_job 없이 새 스레드에서는 job context가 None"""
+        result = {}
+
+        with datahub_job("parent-job"):
+            def worker():
+                result["job"] = get_job()
+
+            t = threading.Thread(target=worker)
+            t.start()
+            t.join()
+
+        assert result["job"] is None
+
+    def test_propagate_job_passes_context_to_worker_thread(self):
+        """propagate_job으로 감싸면 worker 스레드에서 job context 접근 가능"""
+        result = {}
+
+        with datahub_job("parent-job"):
+            @propagate_job
+            def worker():
+                result["job"] = get_job()
+
+            t = threading.Thread(target=worker)
+            t.start()
+            t.join()
+
+        assert result["job"] is not None
+        assert result["job"].job_id == "parent-job"
+
+    def test_propagate_job_with_thread_pool_executor(self):
+        """ThreadPoolExecutor 병렬 작업에서 모든 worker가 동일 job context 공유"""
+        results = {}
+
+        with datahub_job("parallel-job"):
+            @propagate_job
+            def worker(idx):
+                results[idx] = get_job().job_id if get_job() else None
+
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                futures = [executor.submit(worker, i) for i in range(3)]
+                for f in futures:
+                    f.result()
+
+        assert len(results) == 3
+        assert all(job_id == "parallel-job" for job_id in results.values())
+
+    def test_propagate_job_cleans_up_after_worker(self):
+        """worker 스레드 종료 후 해당 스레드의 job context가 정리됨"""
+        thread_job_after = {}
+
+        with datahub_job("parent-job"):
+            @propagate_job
+            def worker():
+                pass  # 작업 후 finally에서 _local.job = None
+
+            def check_after():
+                worker()
+                thread_job_after["job"] = get_job()  # worker 실행 후 확인
+
+            t = threading.Thread(target=check_after)
+            t.start()
+            t.join()
+
+        assert thread_job_after["job"] is None

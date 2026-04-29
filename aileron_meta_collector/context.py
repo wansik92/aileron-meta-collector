@@ -104,6 +104,42 @@ def datahub_job(
         clear_job()
 
 
+def propagate_job(fn: F) -> F:
+    """현재 스레드의 job context를 worker 스레드로 전파합니다.
+
+    ThreadPoolExecutor 등에서 병렬로 Athena 작업을 수행할 때
+    lineage를 캡처하려면 submit할 함수를 이 데코레이터로 감싸야 합니다.
+
+    ``propagate_job``은 **호출 시점(부모 스레드)**에서 job을 캡처하므로
+    반드시 ``@datahub_job_fn`` 또는 ``datahub_job`` context 안에서 호출해야 합니다.
+
+    사용 예::
+
+        @datahub_job_fn("parallel-etl", flow="pipeline")
+        def run():
+            @propagate_job
+            def task(sql):
+                athena.start_query_execution(QueryString=sql, ...)
+                athena.get_query_execution(...)
+
+            with ThreadPoolExecutor() as executor:
+                futures = [executor.submit(task, sql) for sql in sqls]
+                for f in futures:
+                    f.result()
+    """
+    job = get_job()  # 부모 스레드에서 캡처
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        _local.job = job  # worker 스레드에 job 설정
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _local.job = None  # worker 스레드 정리
+
+    return wrapper  # type: ignore[return-value]
+
+
 def datahub_job_fn(
     job_id: str,
     flow: str = "default",

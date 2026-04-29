@@ -27,6 +27,9 @@ E-commerce ETL 파이프라인 — 지원하는 모든 Athena 쿼리 타입을 �
   [Step 6] UNLOAD            analytics.daily_summary
                           → s3://dw-export/reports/daily/
 
+  [Step 7] UNLOAD ×2 (병렬)  analytics.customer_orders → s3://dw-export/customer-orders/
+            propagate_job    analytics.daily_summary   → s3://dw-export/daily-summary/
+
 실행 조건:
   - DataHub GMS가 실행 중이어야 함
   - DATAHUB_GMS_URL 환경변수 설정 필요 (기본값: http://localhost:8080)
@@ -44,8 +47,10 @@ import boto3
 import pytest
 from botocore.stub import Stubber
 
+from concurrent.futures import ThreadPoolExecutor
+
 from aileron_meta_collector import datahub_job_fn, install_all_hooks
-from aileron_meta_collector.context import clear_job, get_job
+from aileron_meta_collector.context import clear_job, datahub_job, get_job, propagate_job
 from aileron_meta_collector.emitter import flush_emit
 
 
@@ -146,6 +151,25 @@ SQL_UNLOAD = """
     WITH (format = 'PARQUET', compression = 'SNAPPY')
 """
 
+# Step 7: 병렬 UNLOAD — 분석 결과를 S3에 동시 export (propagate_job 사용)
+SQL_UNLOAD_CUSTOMER_ORDERS = """
+    UNLOAD (
+        SELECT customer_id, name, email, order_count, total_amount
+        FROM analytics.customer_orders
+    )
+    TO 's3://dw-export/customer-orders/'
+    WITH (format = 'PARQUET', compression = 'SNAPPY')
+"""
+
+SQL_UNLOAD_DAILY_SUMMARY = """
+    UNLOAD (
+        SELECT order_date, category, order_count, revenue
+        FROM analytics.daily_summary
+    )
+    TO 's3://dw-export/daily-summary/'
+    WITH (format = 'PARQUET', compression = 'SNAPPY')
+"""
+
 # 파이프라인 스텝 정의: (job_name, sql, exec_id, database)
 PIPELINE_STEPS = [
     ("step1-ingest-orders",          SQL_INSERT_INTO,            "pipe-001", "staging"),
@@ -227,6 +251,41 @@ def _run_step(
             snapshot["job"] = get_job()
 
         step()
+
+    return snapshot["job"]
+
+
+def _run_parallel_step(
+    job_name: str,
+    tasks: list[tuple[str, str, str]],  # [(exec_id, sql, database), ...]
+    flow: str = "ecommerce-pipeline",
+) -> Any:
+    """여러 Athena 쿼리를 ThreadPoolExecutor로 병렬 실행하는 파이프라인 스텝.
+    propagate_job으로 worker 스레드에 job context를 전파합니다.
+    """
+    clients = [_make_athena(exec_id, sql) for exec_id, sql, _ in tasks]
+    snapshot = {}
+
+    with datahub_job(job_name, flow=flow) as job:
+        snapshot["job"] = job
+
+        @propagate_job
+        def task(athena, stubber, sql, database):
+            with stubber:
+                qid = athena.start_query_execution(
+                    QueryString=sql,
+                    QueryExecutionContext={"Database": database},
+                    ResultConfiguration={"OutputLocation": "s3://results/"},
+                )["QueryExecutionId"]
+                athena.get_query_execution(QueryExecutionId=qid)
+
+        with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+            futures = [
+                executor.submit(task, athena, stubber, sql, db)
+                for (athena, stubber), (_, sql, db) in zip(clients, tasks)
+            ]
+            for f in futures:
+                f.result()
 
     return snapshot["job"]
 
@@ -340,9 +399,38 @@ class TestEcommercePipeline:
             outputs=["dw-export"],
         )
 
+    def test_step7_parallel_export(self):
+        """UNLOAD ×2 병렬 (propagate_job):
+        analytics.customer_orders → s3://dw-export/customer-orders/
+        analytics.daily_summary   → s3://dw-export/daily-summary/
+
+        DataHub UI 확인:
+          Pipelines → ecommerce-pipeline → step7-parallel-export → Lineage 탭
+          inputs : analytics.customer_orders, analytics.daily_summary
+          outputs: s3://dw-export/customer-orders/, s3://dw-export/daily-summary/
+        """
+        job = _run_parallel_step(
+            "step7-parallel-export",
+            tasks=[
+                ("parallel-exp-001", SQL_UNLOAD_CUSTOMER_ORDERS, "analytics"),
+                ("parallel-exp-002", SQL_UNLOAD_DAILY_SUMMARY,   "analytics"),
+            ],
+        )
+        flush_emit()
+
+        print(f"\n[step7] inputs : {job.inputs}")
+        print(f"[step7] outputs: {job.outputs}")
+
+        _assert_lineage(
+            {"job_name": "step7", "inputs": job.inputs, "outputs": job.outputs},
+            inputs=["analytics.customer_orders", "analytics.daily_summary"],
+            outputs=["dw-export/customer-orders", "dw-export/daily-summary"],
+        )
+
     def test_full_pipeline(self):
         """
-        6개 스텝 전체를 순서대로 실행하여 DataHub에 전송.
+        7개 스텝 전체를 순서대로 실행하여 DataHub에 전송.
+        Step 7은 propagate_job으로 병렬 실행합니다.
 
         DataHub UI에서 확인:
           Pipelines → ecommerce-pipeline
@@ -352,9 +440,11 @@ class TestEcommercePipeline:
             step4-update-daily-summary dw.order_items → analytics.daily_summary
             step5-top-customers-temp   customer_orders + daily_summary → tmp_top_customers
             step6-export-to-s3         analytics.daily_summary → s3://dw-export/reports/daily/
+            step7-parallel-export      customer_orders + daily_summary → s3 ×2 (병렬)
         """
         results = []
 
+        # Step 1~6: 순차 실행
         for job_name, sql, exec_id, database in PIPELINE_STEPS:
             job = _run_step(job_name, sql, "full-" + exec_id, database)
             results.append({
@@ -363,7 +453,21 @@ class TestEcommercePipeline:
                 "outputs":  list(job.outputs),
             })
 
-        flush_emit()  # 모든 비동기 emit 완료 대기
+        # Step 7: 병렬 실행 (propagate_job)
+        job7 = _run_parallel_step(
+            "step7-parallel-export",
+            tasks=[
+                ("full-parallel-exp-001", SQL_UNLOAD_CUSTOMER_ORDERS, "analytics"),
+                ("full-parallel-exp-002", SQL_UNLOAD_DAILY_SUMMARY,   "analytics"),
+            ],
+        )
+        results.append({
+            "job_name": "step7-parallel-export",
+            "inputs":   list(job7.inputs),
+            "outputs":  list(job7.outputs),
+        })
+
+        flush_emit()
 
         print(f"\n[full-pipeline] DataHub UI: {DATAHUB_GMS_URL}")
         print("[full-pipeline] Pipelines → ecommerce-pipeline")
@@ -372,9 +476,10 @@ class TestEcommercePipeline:
             print(f"    inputs : {r['inputs']}")
             print(f"    outputs: {r['outputs']}")
 
-        _assert_lineage(results[0], inputs=["raw.orders"],                                       outputs=["staging.orders"])
-        _assert_lineage(results[1], inputs=["staging.orders", "raw.products"],                   outputs=["dw.order_items"])
-        _assert_lineage(results[2], inputs=["dw.order_items", "raw.customers"],                  outputs=["analytics.customer_orders"])
-        _assert_lineage(results[3], inputs=["dw.order_items"],                                   outputs=["analytics.daily_summary"])
+        _assert_lineage(results[0], inputs=["raw.orders"],                                           outputs=["staging.orders"])
+        _assert_lineage(results[1], inputs=["staging.orders", "raw.products"],                       outputs=["dw.order_items"])
+        _assert_lineage(results[2], inputs=["dw.order_items", "raw.customers"],                      outputs=["analytics.customer_orders"])
+        _assert_lineage(results[3], inputs=["dw.order_items"],                                       outputs=["analytics.daily_summary"])
         _assert_lineage(results[4], inputs=["analytics.customer_orders", "analytics.daily_summary"], outputs=["tmp_top_customers"])
-        _assert_lineage(results[5], inputs=["analytics.daily_summary"],                          outputs=["dw-export"])
+        _assert_lineage(results[5], inputs=["analytics.daily_summary"],                              outputs=["dw-export"])
+        _assert_lineage(results[6], inputs=["analytics.customer_orders", "analytics.daily_summary"], outputs=["dw-export/customer-orders", "dw-export/daily-summary"])

@@ -1,6 +1,6 @@
 from .hooks.sqlalchemy import install_sqlalchemy_hooks
 from .hooks.boto3 import install_boto3_hooks
-from .context import set_job, clear_job, datahub_job, datahub_job_fn
+from .context import set_job, clear_job, datahub_job, datahub_job_fn, propagate_job
 from .lineage import add_input, add_output, emit_lineage, build_dataset_urn
 
 
@@ -19,6 +19,7 @@ __all__ = [
     "clear_job",
     "datahub_job",
     "datahub_job_fn",
+    "propagate_job",
     # 수동 lineage 주입
     "add_input",
     "add_output",
