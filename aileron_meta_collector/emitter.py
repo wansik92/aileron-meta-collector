@@ -122,7 +122,7 @@ def _emit_lineage(input_urns: list[str], output_urns: list[str]) -> None:
                 entityUrn=output_urn,
                 aspect=UpstreamLineageClass(upstreams=upstreams),
             ))
-            logger.debug("lineage emitted: %s -> %s", input_urns, output_urn)
+            logger.info("[aileron] emit ok | lineage  %s → %s", input_urns, output_urn)
 
     except Exception:
         if DATAHUB_SILENT_FAIL:
@@ -173,7 +173,7 @@ def _emit_dataflow(job: JobContext, env: str) -> None:
                 description=job.flow_description,
             ),
         ))
-        logger.debug("DataFlow emitted: %s", job.flow)
+        logger.info("[aileron] emit ok | dataflow  flow=%s", job.flow)
     except Exception:
         if DATAHUB_SILENT_FAIL:
             logger.warning("DataFlow emit failed (silent)", exc_info=True)
@@ -200,7 +200,7 @@ def _emit_datajob(job: JobContext, env: str) -> None:
                 description=job.description,
             ),
         ))
-        logger.debug("DataJob emitted: %s", job.job_id)
+        logger.info("[aileron] emit ok | datajob   flow=%s  job=%s", job.flow, job.job_id)
     except Exception:
         if DATAHUB_SILENT_FAIL:
             logger.warning("DataJob emit failed (silent)", exc_info=True)
@@ -246,7 +246,7 @@ def _emit_run_start(job: JobContext, env: str) -> None:
                 ),
             ),
         ])
-        logger.debug("DataProcessInstance STARTED: %s", instance_urn)
+        logger.info("[aileron] emit ok | run_start  flow=%s  job=%s  run=%s", job.flow, job.job_id, job.run_id[:8])
 
     except Exception:
         if DATAHUB_SILENT_FAIL:
@@ -316,7 +316,7 @@ def _emit_run_end(
             ))
 
         _safe_emit(emitter, mcps)
-        logger.debug("DataProcessInstance %s: %s", result_type, instance_urn)
+        logger.info("[aileron] emit ok | run_end    flow=%s  job=%s  run=%s  result=%s", job.flow, job.job_id, job.run_id[:8], result_type)
 
     except Exception:
         if DATAHUB_SILENT_FAIL:
