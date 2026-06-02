@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aileron-meta-collector"
-version = "0.1.4"
+version = "0.1.5"
 description = "Automatic DataHub lineage collector via SQLAlchemy and boto3 event hooks"
 readme = "README.md"
 license = { text = "MIT" }
@@ -36,7 +36,7 @@ classifiers = [
 # 핵심 의존성 없음 — boto3·SQLAlchemy·datahub는 사용자 환경에 이미 존재
 # sqlparse만 SQL 파싱에 반드시 필요
 dependencies = [
-    "sqlparse>=0.5.0",
+    "sqlparse>=0.4.0",
 ]
 
 [project.urls]
