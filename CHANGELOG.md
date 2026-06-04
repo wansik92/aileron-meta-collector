@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.7] - 2026-06-04
+
+### Changed
+- `DataFlowInfoClass` 에서 `env` 필드 제거
+  - DataHub 권장 방식: 환경 구분은 URN cluster 로만 관리
+  - `DataFlowInfoClass.env` 는 FabricType enum 만 허용하므로 임의 cluster 명 사용 시 충돌 발생
+
+---
+
+## [0.1.6] - 2026-06-04
+
+### Fixed
+- `DataFlowInfoClass.env` 에 유효하지 않은 FabricType 전달 시 `AvroTypeException` 발생 수정
+  - PROD/EI/DEV/CORP/STAGING/TEST 외 임의 값은 PROD 로 fallback 처리
+  - DataFlow URN 의 클러스터명은 임의 값 그대로 유지
+
+---
+
 ## [0.1.5] - 2026-06-02
 
 ### Changed

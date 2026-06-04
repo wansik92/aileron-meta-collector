@@ -169,7 +169,6 @@ def _emit_dataflow(job: JobContext, env: str) -> None:
             entityUrn=_flow_urn(job, env),
             aspect=DataFlowInfoClass(
                 name=job.flow,
-                env=env,
                 description=job.flow_description,
             ),
         ))
