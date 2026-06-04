@@ -80,7 +80,11 @@ def _job_urn(job: JobContext, env: str) -> str:
 
 
 def _job_urn_by_id(job_id: str, flow: str, platform: str, env: str) -> str:
-    """job_id만 알고 있을 때 DataJob URN 생성 (upstream_jobs 용)"""
+    """job_id 또는 full URN 으로 DataJob URN 반환 (upstream_jobs 용)
+    full URN(urn:li:...) 이면 그대로 사용 — cross-platform upstream 참조 가능.
+    """
+    if job_id.startswith("urn:li:"):
+        return job_id
     flow_urn = f"urn:li:dataFlow:({platform},{flow},{env})"
     return f"urn:li:dataJob:({flow_urn},{job_id})"
 

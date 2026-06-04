@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.8] - 2026-06-04
+
+### Added
+- `datahub_job(patch=True)` 파라미터 추가
+  - `patch=True`: `DataJobInputOutput` 을 patch MCP 로 emit — 기존 데이터에 추가 (덮어쓰지 않음)
+  - `patch=False` (기본값): 기존 replace 방식 유지
+- `datahub_job_fn(patch=True)` 동일 파라미터 추가
+
+---
+
+## [0.1.9] - 2026-06-04
+
+### Added
+- `upstream_jobs` 에 full URN 지정 지원
+  - `urn:li:...` 형식이면 그대로 사용 — cross-platform upstream 참조 가능
+  - 예) Airflow DataJob → pythonSdk DataJob 연결
+
+---
+
 ## [0.1.7] - 2026-06-04
 
 ### Changed
