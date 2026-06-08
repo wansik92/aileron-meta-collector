@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 try:
     from datahub.emitter.mcp import MetadataChangeProposalWrapper
     from datahub.emitter.rest_emitter import DatahubRestEmitter
+    from datahub.specific.datajob import DataJobPatchBuilder
     from datahub.metadata.schema_classes import (
         AuditStampClass,
         DataFlowInfoClass,
@@ -259,13 +260,13 @@ def _emit_run_start(job: JobContext, env: str) -> None:
 
 
 def emit_run_end_async(
-    job: JobContext, env: str, success: bool, error_msg: str | None = None
+    job: JobContext, env: str, success: bool, error_msg: str | None = None, patch: bool = False
 ) -> None:
-    _executor.submit(_emit_run_end, job, env, success, error_msg)
+    _executor.submit(_emit_run_end, job, env, success, error_msg, patch)
 
 
 def _emit_run_end(
-    job: JobContext, env: str, success: bool, error_msg: str | None
+    job: JobContext, env: str, success: bool, error_msg: str | None, patch: bool = False
 ) -> None:
     try:
         _check_datahub()
@@ -309,14 +310,24 @@ def _emit_run_end(
         ]
 
         if job.inputs or job.outputs or upstream_job_urns:
-            mcps.append(MetadataChangeProposalWrapper(
-                entityUrn=job_urn,
-                aspect=DataJobInputOutputClass(
-                    inputDatasets=job.inputs,
-                    outputDatasets=job.outputs,
-                    inputDatajobs=upstream_job_urns,
-                ),
-            ))
+            if patch:
+                patch_builder = DataJobPatchBuilder(job_urn)
+                for urn in job.inputs:
+                    patch_builder.add_input_dataset(urn)
+                for urn in job.outputs:
+                    patch_builder.add_output_dataset(urn)
+                for urn in upstream_job_urns:
+                    patch_builder.add_input_datajob(urn)
+                mcps.extend(patch_builder.build())
+            else:
+                mcps.append(MetadataChangeProposalWrapper(
+                    entityUrn=job_urn,
+                    aspect=DataJobInputOutputClass(
+                        inputDatasets=job.inputs,
+                        outputDatasets=job.outputs,
+                        inputDatajobs=upstream_job_urns,
+                    ),
+                ))
 
         _safe_emit(emitter, mcps)
         logger.info("[aileron] emit ok | run_end    flow=%s  job=%s  run=%s  result=%s", job.flow, job.job_id, job.run_id[:8], result_type)

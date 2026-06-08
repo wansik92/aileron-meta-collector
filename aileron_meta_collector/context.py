@@ -63,6 +63,7 @@ def datahub_job(
     upstream_jobs: list[str] | None = None,
     description: str | None = None,
     flow_description: str | None = None,
+    patch: bool = False,
 ) -> Generator[JobContext, None, None]:
     from .config import DATAHUB_ENV
     from .emitter import (
@@ -91,14 +92,14 @@ def datahub_job(
         )
         logger.debug("[aileron] inputs  : %s", job.inputs)
         logger.debug("[aileron] outputs : %s", job.outputs)
-        emit_run_end_async(job, DATAHUB_ENV, success=True)
+        emit_run_end_async(job, DATAHUB_ENV, success=True, patch=patch)
     except Exception as e:
         elapsed = int(time.time() * 1000) - job.start_time_ms
         logger.warning(
             "[aileron] job failed   | flow=%s  job=%s  run=%s  elapsed=%dms  error=%s",
             flow, job_id, job.run_id[:8], elapsed, e,
         )
-        emit_run_end_async(job, DATAHUB_ENV, success=False, error_msg=str(e))
+        emit_run_end_async(job, DATAHUB_ENV, success=False, error_msg=str(e), patch=patch)
         raise
     finally:
         clear_job()
@@ -147,6 +148,7 @@ def datahub_job_fn(
     upstream_jobs: list[str] | None = None,
     description: str | None = None,
     flow_description: str | None = None,
+    patch: bool = False,
 ) -> Callable[[F], F]:
     """
     함수 단위 lineage 수집 데코레이터.
@@ -157,6 +159,8 @@ def datahub_job_fn(
         platform:      플랫폼 (기본값: pythonSdk)
         upstream_jobs: 이 job이 의존하는 상위 DataJob ID 목록.
                        같은 flow 내 다른 job_id를 지정하면 DataJob 간 리니지가 그려짐.
+        patch:         True이면 DataJobInputOutput을 patch MCP로 emit — 기존 데이터에 추가 (덮어쓰지 않음).
+                       False(기본값)이면 replace 방식 유지.
 
     사용 예::
 
@@ -173,7 +177,8 @@ def datahub_job_fn(
             with datahub_job(job_id, flow=flow, platform=platform,
                              upstream_jobs=upstream_jobs,
                              description=description,
-                             flow_description=flow_description):
+                             flow_description=flow_description,
+                             patch=patch):
                 return func(*args, **kwargs)
         return wrapper  # type: ignore[return-value]
     return decorator
