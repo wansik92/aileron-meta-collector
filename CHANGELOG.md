@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.16] - 2026-06-08
+
+### Fixed
+- GMS down 시 ETL 프로세스가 종료되지 않고 PID가 살아있던 문제 수정
+  - emit 스레드풀을 atexit 핸들러로 등록 — 프로세스 종료 시 대기 없이 즉시 shutdown
+  - 큐에 쌓인 미실행 emit 작업도 함께 취소 (cancel_futures=True)
+
+---
+
 ## [0.1.15] - 2026-06-08
 
 ### Added
