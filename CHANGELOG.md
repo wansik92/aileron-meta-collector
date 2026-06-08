@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.13] - 2026-06-08
+
+### Fixed
+- DataHub down 시 emit 즉시 skip 처리
+  - 첫 실패 감지 시 `_datahub_reachable=False` 플래그 설정 → 이후 요청은 큐 적재 없이 즉시 반환
+  - emit 성공 시 자동 복구 (`_datahub_reachable=True`)
+  - 요청 폭주 시 큐 누적 및 스레드 블로킹 문제 해결
+
+---
+
 ## [0.1.12] - 2026-06-08
 
 ### Fixed

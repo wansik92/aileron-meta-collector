@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 _EMIT_MAX_WORKERS = 2
 _executor = ThreadPoolExecutor(max_workers=_EMIT_MAX_WORKERS, thread_name_prefix="aileron-emit")
 _emitter: "DatahubRestEmitter | None" = None
+_datahub_reachable: bool = True  # 연결 가능 여부 — 실패 시 False, 성공 시 복구
 
 
 def flush_emit(timeout: float = 30.0) -> None:
@@ -80,6 +81,30 @@ def _safe_emit(emitter, mcps: list) -> None:
         emitter.emit(mcp)
 
 
+def _should_skip() -> bool:
+    """DataHub 연결 불가 상태면 emit을 즉시 skip합니다."""
+    if not _datahub_reachable:
+        logger.debug("[aileron] DataHub 연결 불가 상태 — emit skip")
+        return True
+    return False
+
+
+def _on_success() -> None:
+    global _datahub_reachable
+    if not _datahub_reachable:
+        logger.info("[aileron] DataHub 연결 복구 — emit 재개")
+    _datahub_reachable = True
+
+
+def _on_failure(e: Exception) -> None:
+    global _datahub_reachable
+    _datahub_reachable = False
+    if DATAHUB_SILENT_FAIL:
+        logger.warning("[aileron] DataHub emit 실패 — 이후 요청 skip: %s", e)
+    else:
+        raise e
+
+
 def _flow_urn(job: JobContext, env: str) -> str:
     return f"urn:li:dataFlow:({job.platform},{job.flow},{env})"
 
@@ -111,12 +136,13 @@ def emit_lineage_async(job: JobContext, input_urns: list[str], output_urns: list
 
 
 def _emit_lineage(input_urns: list[str], output_urns: list[str]) -> None:
+    if _should_skip():
+        return
     try:
         _check_datahub()
         emitter = _get_emitter()
         audit = AuditStampClass(time=int(time.time() * 1000), actor="urn:li:corpuser:datahub")
 
-        # input dataset stub entity 생성 — entity가 없으면 DataJob upstream 연결이 UI에 표시되지 않음
         for input_urn in input_urns:
             emitter.emit(MetadataChangeProposalWrapper(
                 entityUrn=input_urn,
@@ -136,12 +162,9 @@ def _emit_lineage(input_urns: list[str], output_urns: list[str]) -> None:
                 aspect=UpstreamLineageClass(upstreams=upstreams),
             ))
             logger.info("[aileron] emit ok | lineage  %s → %s", input_urns, output_urn)
-
-    except Exception:
-        if DATAHUB_SILENT_FAIL:
-            logger.warning("Dataset lineage emit failed (silent)", exc_info=True)
-        else:
-            raise
+        _on_success()
+    except Exception as e:
+        _on_failure(e)
 
 
 # ── Dataset Description ───────────────────────────────────────────────────────
@@ -153,6 +176,8 @@ def emit_dataset_description_async(urn: str, description: str) -> None:
 
 
 def _emit_dataset_description(urn: str, description: str) -> None:
+    if _should_skip():
+        return
     try:
         _check_datahub()
         emitter = _get_emitter()
@@ -160,12 +185,10 @@ def _emit_dataset_description(urn: str, description: str) -> None:
             entityUrn=urn,
             aspect=DatasetPropertiesClass(description=description),
         ))
+        _on_success()
         logger.debug("Dataset description emitted: %s", urn)
-    except Exception:
-        if DATAHUB_SILENT_FAIL:
-            logger.warning("Dataset description emit failed (silent)", exc_info=True)
-        else:
-            raise
+    except Exception as e:
+        _on_failure(e)
 
 
 # ── DataFlow ──────────────────────────────────────────────────────────────────
@@ -175,6 +198,8 @@ def emit_dataflow_async(job: JobContext, env: str) -> None:
 
 
 def _emit_dataflow(job: JobContext, env: str) -> None:
+    if _should_skip():
+        return
     try:
         _check_datahub()
         emitter = _get_emitter()
@@ -185,12 +210,10 @@ def _emit_dataflow(job: JobContext, env: str) -> None:
                 description=job.flow_description,
             ),
         ))
+        _on_success()
         logger.info("[aileron] emit ok | dataflow  flow=%s", job.flow)
-    except Exception:
-        if DATAHUB_SILENT_FAIL:
-            logger.warning("DataFlow emit failed (silent)", exc_info=True)
-        else:
-            raise
+    except Exception as e:
+        _on_failure(e)
 
 
 # ── DataJob ───────────────────────────────────────────────────────────────────
@@ -200,6 +223,8 @@ def emit_datajob_async(job: JobContext, env: str) -> None:
 
 
 def _emit_datajob(job: JobContext, env: str) -> None:
+    if _should_skip():
+        return
     try:
         _check_datahub()
         emitter = _get_emitter()
@@ -212,12 +237,10 @@ def _emit_datajob(job: JobContext, env: str) -> None:
                 description=job.description,
             ),
         ))
+        _on_success()
         logger.info("[aileron] emit ok | datajob   flow=%s  job=%s", job.flow, job.job_id)
-    except Exception:
-        if DATAHUB_SILENT_FAIL:
-            logger.warning("DataJob emit failed (silent)", exc_info=True)
-        else:
-            raise
+    except Exception as e:
+        _on_failure(e)
 
 
 # ── DataProcessInstance ───────────────────────────────────────────────────────
@@ -227,6 +250,8 @@ def emit_run_start_async(job: JobContext, env: str) -> None:
 
 
 def _emit_run_start(job: JobContext, env: str) -> None:
+    if _should_skip():
+        return
     try:
         _check_datahub()
         emitter = _get_emitter()
@@ -258,13 +283,10 @@ def _emit_run_start(job: JobContext, env: str) -> None:
                 ),
             ),
         ])
+        _on_success()
         logger.info("[aileron] emit ok | run_start  flow=%s  job=%s  run=%s", job.flow, job.job_id, job.run_id[:8])
-
-    except Exception:
-        if DATAHUB_SILENT_FAIL:
-            logger.warning("DataProcessInstance start emit failed (silent)", exc_info=True)
-        else:
-            raise
+    except Exception as e:
+        _on_failure(e)
 
 
 def emit_run_end_async(
@@ -276,6 +298,8 @@ def emit_run_end_async(
 def _emit_run_end(
     job: JobContext, env: str, success: bool, error_msg: str | None, patch: bool = False
 ) -> None:
+    if _should_skip():
+        return
     try:
         _check_datahub()
         emitter = _get_emitter()
@@ -338,10 +362,7 @@ def _emit_run_end(
                 ))
 
         _safe_emit(emitter, mcps)
+        _on_success()
         logger.info("[aileron] emit ok | run_end    flow=%s  job=%s  run=%s  result=%s", job.flow, job.job_id, job.run_id[:8], result_type)
-
-    except Exception:
-        if DATAHUB_SILENT_FAIL:
-            logger.warning("DataProcessInstance end emit failed (silent)", exc_info=True)
-        else:
-            raise
+    except Exception as e:
+        _on_failure(e)
