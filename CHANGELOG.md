@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.11] - 2026-06-08
+
+### Fixed
+- DataHub 연결 불가(DNS 실패 / 타임아웃) 시 스레드 블로킹 방지
+  - `connect_timeout_sec` 기본값 3초 설정 (기존: urllib3 기본 무제한)
+  - `retry_max_times` 기본값 0으로 설정 (기존: 3회 재시도)
+  - 환경변수 `DATAHUB_CONNECT_TIMEOUT_SEC`, `DATAHUB_RETRY_MAX_TIMES` 로 조정 가능
+
+---
+
 ## [0.1.10] - 2026-06-08
 
 ### Added

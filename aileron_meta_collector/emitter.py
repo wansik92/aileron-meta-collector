@@ -33,7 +33,7 @@ except ImportError:
     _DATAHUB_AVAILABLE = False
     DatahubRestEmitter = None  # type: ignore[assignment,misc]
 
-from .config import DATAHUB_ENV, DATAHUB_GMS_URL, DATAHUB_SILENT_FAIL
+from .config import DATAHUB_ENV, DATAHUB_GMS_URL, DATAHUB_SILENT_FAIL, DATAHUB_CONNECT_TIMEOUT_SEC, DATAHUB_RETRY_MAX_TIMES
 from .context import JobContext
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,11 @@ def _check_datahub() -> None:
 
 def _get_emitter() -> "DatahubRestEmitter":
     _check_datahub()
-    return DatahubRestEmitter(gms_server=DATAHUB_GMS_URL)
+    return DatahubRestEmitter(
+        gms_server=DATAHUB_GMS_URL,
+        connect_timeout_sec=DATAHUB_CONNECT_TIMEOUT_SEC,
+        retry_max_times=DATAHUB_RETRY_MAX_TIMES,
+    )
 
 
 def _safe_emit(emitter, mcps: list) -> None:
