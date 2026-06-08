@@ -1,5 +1,8 @@
 import os
 
+# DataHub 연동 활성화 여부 (기본: True) — False 시 모든 emit skip, 비즈니스 로직에 영향 없음
+DATAHUB_ENABLED: bool = os.getenv("DATAHUB_ENABLED", "true").lower() == "true"
+
 DATAHUB_GMS_URL: str = os.getenv("DATAHUB_GMS_URL", "http://localhost:8080")
 DATAHUB_ENV: str = os.getenv("DATAHUB_ENV", "PROD")
 

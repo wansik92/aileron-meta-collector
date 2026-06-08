@@ -65,7 +65,13 @@ def datahub_job(
     flow_description: str | None = None,
     patch: bool = False,
 ) -> Generator[JobContext, None, None]:
-    from .config import DATAHUB_ENV
+    from .config import DATAHUB_ENABLED, DATAHUB_ENV
+
+    # DATAHUB_ENABLED=false 이면 emit 없이 그냥 통과 — 비즈니스 로직에 영향 없음
+    if not DATAHUB_ENABLED:
+        yield JobContext(job_id, flow, platform, upstream_jobs or [], description or "", flow_description or "")
+        return
+
     from .emitter import (
         emit_dataflow_async,
         emit_datajob_async,
