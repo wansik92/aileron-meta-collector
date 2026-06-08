@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.8] - 2026-06-04
+## [0.1.10] - 2026-06-08
 
 ### Added
 - `datahub_job(patch=True)` 파라미터 추가
