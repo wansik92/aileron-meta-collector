@@ -9,3 +9,9 @@ build/
 .ruff_cache/
 .pytest_cache/
 *.egg
+.venv*/
+.DS_Store
+.idea/
+*.iml
+datahub-actions/
+docs/
