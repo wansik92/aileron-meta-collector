@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aileron-meta-collector"
-version = "0.1.13"
+version = "0.1.14"
 description = "Automatic DataHub lineage collector via SQLAlchemy and boto3 event hooks"
 readme = "README.md"
 license = { text = "MIT" }

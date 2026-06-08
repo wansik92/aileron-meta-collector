@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -42,6 +43,9 @@ _EMIT_MAX_WORKERS = 2
 _executor = ThreadPoolExecutor(max_workers=_EMIT_MAX_WORKERS, thread_name_prefix="aileron-emit")
 _emitter: "DatahubRestEmitter | None" = None
 _datahub_reachable: bool = True  # 연결 가능 여부 — 실패 시 False, 성공 시 복구
+_last_fail_time: float = 0.0     # 마지막 실패 시각 (쿨다운 계산용)
+
+_COOLDOWN_SEC: float = float(os.getenv("DATAHUB_COOLDOWN_SEC", "60"))  # 재시도 간격 (기본 60초)
 
 
 def flush_emit(timeout: float = 30.0) -> None:
@@ -82,8 +86,13 @@ def _safe_emit(emitter, mcps: list) -> None:
 
 
 def _should_skip() -> bool:
-    """DataHub 연결 불가 상태면 emit을 즉시 skip합니다."""
+    """DataHub 연결 불가 상태면 emit을 즉시 skip합니다.
+    단, 마지막 실패로부터 COOLDOWN_SEC 이상 지났으면 재시도를 허용합니다.
+    """
     if not _datahub_reachable:
+        if time.time() - _last_fail_time > _COOLDOWN_SEC:
+            logger.info("[aileron] DataHub 쿨다운 종료 — 연결 재시도")
+            return False  # 쿨다운 지남 → 한 번 시도
         logger.debug("[aileron] DataHub 연결 불가 상태 — emit skip")
         return True
     return False
@@ -97,10 +106,11 @@ def _on_success() -> None:
 
 
 def _on_failure(e: Exception) -> None:
-    global _datahub_reachable
+    global _datahub_reachable, _last_fail_time
     _datahub_reachable = False
+    _last_fail_time = time.time()
     if DATAHUB_SILENT_FAIL:
-        logger.warning("[aileron] DataHub emit 실패 — 이후 요청 skip: %s", e)
+        logger.warning("[aileron] DataHub emit 실패 — %s초 후 재시도: %s", int(_COOLDOWN_SEC), e)
     else:
         raise e
 
