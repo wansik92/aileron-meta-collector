@@ -43,10 +43,11 @@ logger = logging.getLogger(__name__)
 _EMIT_MAX_WORKERS = 2
 _executor = ThreadPoolExecutor(max_workers=_EMIT_MAX_WORKERS, thread_name_prefix="aileron-emit")
 
-# 프로세스 종료 시 emit 스레드를 기다리지 않고 즉시 종료
-# wait=False: 실행 중인 작업 완료를 기다리지 않음
-# cancel_futures=True: 큐에 쌓인 미실행 작업 취소
-atexit.register(lambda: _executor.shutdown(wait=False, cancel_futures=True))
+# 프로세스 종료 시 emit 스레드풀 정리
+# wait=True: 실행 중인 emit 완료까지 대기 (GMS 살아있으면 emit 보장)
+# cancel_futures=False: 큐에 쌓인 작업도 실행
+# GMS down 시엔 _datahub_reachable=False로 skip되므로 최대 3초(connect_timeout) 내 종료
+atexit.register(lambda: _executor.shutdown(wait=True, cancel_futures=False))
 _emitter: "DatahubRestEmitter | None" = None
 _datahub_reachable: bool = True  # 연결 가능 여부 — 실패 시 False, 성공 시 복구
 _last_fail_time: float = 0.0     # 마지막 실패 시각 (쿨다운 계산용)

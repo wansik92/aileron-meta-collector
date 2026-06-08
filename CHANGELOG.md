@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.17] - 2026-06-08
+
+### Fixed
+- GMS 살아있을 때 프로세스 종료 시 emit 유실 문제 수정
+  - atexit shutdown을 `wait=True, cancel_futures=False`로 변경
+  - GMS 정상 시 모든 emit 전송 보장
+  - GMS down 시 skip 로직으로 최대 3초(connect_timeout) 내 종료
+
+---
+
 ## [0.1.16] - 2026-06-08
 
 ### Fixed
