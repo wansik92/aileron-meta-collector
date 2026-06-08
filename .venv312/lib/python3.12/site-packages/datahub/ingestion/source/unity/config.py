@@ -1,0 +1,499 @@
+import logging
+import os
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Union
+
+import pydantic
+from pydantic import Field, field_validator, model_validator
+from typing_extensions import Literal
+
+from datahub.configuration.common import (
+    AllowDenyPattern,
+    ConfigEnum,
+    ConfigModel,
+    HiddenFromDocs,
+)
+from datahub.configuration.source_common import (
+    DatasetSourceConfigMixin,
+    LowerCaseDatasetUrnConfigMixin,
+)
+from datahub.configuration.validate_field_removal import pydantic_removed_field
+from datahub.configuration.validate_field_rename import pydantic_renamed_field
+from datahub.ingestion.source.ge_profiling_config import GEProfilingConfig
+from datahub.ingestion.source.sql.sql_config import SQLCommonConfig
+from datahub.ingestion.source.state.stale_entity_removal_handler import (
+    StatefulStaleMetadataRemovalConfig,
+)
+from datahub.ingestion.source.state.stateful_ingestion_base import (
+    StatefulIngestionConfigBase,
+    StatefulProfilingConfigMixin,
+)
+from datahub.ingestion.source.unity.connection import UnityCatalogConnectionConfig
+from datahub.ingestion.source.usage.usage_common import BaseUsageConfig
+from datahub.ingestion.source_config.operation_config import (
+    OperationConfig,
+    is_profiling_enabled,
+)
+from datahub.utilities.global_warning_util import add_global_warning
+
+logger = logging.getLogger(__name__)
+
+# Configuration default constants
+INCLUDE_TAGS_DEFAULT = True
+INCLUDE_HIVE_METASTORE_DEFAULT = True
+
+
+class LineageDataSource(ConfigEnum):
+    AUTO = "AUTO"
+    SYSTEM_TABLES = "SYSTEM_TABLES"
+    API = "API"
+
+
+class UsageDataSource(ConfigEnum):
+    AUTO = "AUTO"
+    SYSTEM_TABLES = "SYSTEM_TABLES"
+    API = "API"
+
+
+class UnityCatalogProfilerConfig(ConfigModel):
+    method: str = Field(
+        description=(
+            "Profiling method to use."
+            " Options supported are `ge`, `analyze`, and `sqlalchemy`."
+            " `ge` uses Great Expectations and runs SELECT SQL queries on profiled tables."
+            " `analyze` calls ANALYZE TABLE on profiled tables. Only works for delta tables."
+            " `sqlalchemy` uses the custom SQLAlchemy-based profiler (no GE dependency)."
+        ),
+    )
+
+    # TODO: Support cluster compute as well, for ge profiling
+    warehouse_id: Optional[str] = Field(
+        default=None, description="SQL Warehouse id, for running profiling queries."
+    )
+
+    pattern: AllowDenyPattern = Field(
+        default=AllowDenyPattern.allow_all(),
+        description=(
+            "Regex patterns to filter tables for profiling during ingestion. "
+            "Specify regex to match the `catalog.schema.table` format. "
+            "Note that only tables allowed by the `table_pattern` will be considered."
+        ),
+    )
+
+
+class DeltaLakeDetails(ConfigModel):
+    platform_instance_name: Optional[str] = Field(
+        default=None, description="Delta-lake paltform instance name"
+    )
+    env: str = Field(default="PROD", description="Delta-lake environment")
+
+
+class UnityCatalogAnalyzeProfilerConfig(UnityCatalogProfilerConfig):
+    method: Literal["analyze"] = "analyze"
+
+    # TODO: Reduce duplicate code with DataLakeProfilerConfig, GEProfilingConfig, SQLAlchemyConfig
+    enabled: bool = Field(
+        default=False, description="Whether profiling should be done."
+    )
+    operation_config: OperationConfig = Field(
+        default_factory=OperationConfig,
+        description="Experimental feature. To specify operation configs.",
+    )
+
+    profile_table_level_only: bool = Field(
+        default=False,
+        description="Whether to perform profiling at table-level only or include column-level profiling as well.",
+    )
+
+    call_analyze: bool = Field(
+        default=True,
+        description=(
+            "Whether to call ANALYZE TABLE as part of profile ingestion."
+            "If false, will ingest the results of the most recent ANALYZE TABLE call, if any."
+        ),
+    )
+
+    max_wait_secs: int = Field(
+        default=int(timedelta(hours=1).total_seconds()),
+        description="Maximum time to wait for an ANALYZE TABLE query to complete.",
+    )
+
+    max_workers: int = Field(
+        default=5 * (os.cpu_count() or 4),
+        description="Number of worker threads to use for profiling. Set to 1 to disable.",
+    )
+
+    @property
+    def include_columns(self):
+        return not self.profile_table_level_only
+
+
+# TODO: should this max_wait_secs had been implemented as a global profiler feature instead of keeping it specific to Unity Catalog?
+class UnityCatalogGEProfilerConfig(UnityCatalogProfilerConfig, GEProfilingConfig):
+    method: Literal["ge"] = "ge"
+
+    max_wait_secs: Optional[int] = Field(
+        default=None,
+        description="Maximum time to wait for a table to be profiled.",
+    )
+
+
+class UnityCatalogSQLAlchemyProfilerConfig(
+    UnityCatalogProfilerConfig, GEProfilingConfig
+):
+    method: Literal["sqlalchemy"] = "sqlalchemy"
+
+    max_wait_secs: Optional[int] = Field(
+        default=None,
+        description="Maximum time to wait for a table to be profiled.",
+    )
+
+
+class UnityCatalogSourceConfig(
+    UnityCatalogConnectionConfig,
+    SQLCommonConfig,
+    StatefulIngestionConfigBase,
+    BaseUsageConfig,
+    DatasetSourceConfigMixin,
+    StatefulProfilingConfigMixin,
+    LowerCaseDatasetUrnConfigMixin,
+):
+    include_metastore: bool = pydantic.Field(
+        default=False,
+        description=(
+            "Whether to ingest the workspace's metastore as a container and include it in all urns."
+            " Changing this will affect the urns of all entities in the workspace."
+            " This config is deprecated and will be removed in the future,"
+            " so it is recommended to not set this to `True` for new ingestions."
+            " If you have an existing unity catalog ingestion, you'll want to avoid duplicates by soft deleting existing data."
+            " If stateful ingestion is enabled, running with `include_metastore: false` should be sufficient."
+            " Otherwise, we recommend deleting via the cli: `datahub delete --platform databricks` and re-ingesting with `include_metastore: false`."
+        ),
+    )
+
+    ingest_data_platform_instance_aspect: Optional[bool] = pydantic.Field(
+        default=False,
+        description=(
+            "Option to enable/disable ingestion of the data platform instance aspect."
+            " The default data platform instance id for a dataset is workspace_name"
+        ),
+    )
+
+    _only_ingest_assigned_metastore_removed = pydantic_removed_field(
+        "only_ingest_assigned_metastore"
+    )
+
+    _metastore_id_pattern_removed = pydantic_removed_field("metastore_id_pattern")
+
+    catalogs: Optional[List[str]] = pydantic.Field(
+        default=None,
+        description=(
+            "Fixed list of catalogs to ingest."
+            " If not specified, catalogs will be ingested based on `catalog_pattern`."
+        ),
+    )
+
+    catalog_pattern: AllowDenyPattern = Field(
+        default=AllowDenyPattern.allow_all(),
+        description="Regex patterns for catalogs to filter in ingestion. Specify regex to match the full `metastore.catalog` name.",
+    )
+
+    schema_pattern: AllowDenyPattern = Field(
+        default=AllowDenyPattern.allow_all(),
+        description="Regex patterns for schemas to filter in ingestion. Specify regex to the full `metastore.catalog.schema` name. e.g. to match all tables in schema analytics, use the regex `^mymetastore\\.mycatalog\\.analytics$`.",
+    )
+
+    table_pattern: AllowDenyPattern = Field(
+        default=AllowDenyPattern.allow_all(),
+        description="Regex patterns for tables to filter in ingestion. Specify regex to match the entire table name in `catalog.schema.table` format. e.g. to match all tables starting with customer in Customer catalog and public schema, use the regex `Customer\\.public\\.customer.*`.",
+    )
+
+    notebook_pattern: AllowDenyPattern = Field(
+        default=AllowDenyPattern.allow_all(),
+        description=(
+            "Regex patterns for notebooks to filter in ingestion, based on notebook *path*."
+            " Specify regex to match the entire notebook path in `/<dir>/.../<name>` format."
+            " e.g. to match all notebooks in the root Shared directory, use the regex `/Shared/.*`."
+        ),
+    )
+
+    domain: Dict[str, AllowDenyPattern] = Field(
+        default=dict(),
+        description='Attach domains to catalogs, schemas or tables during ingestion using regex patterns. Domain key can be a guid like *urn:li:domain:ec428203-ce86-4db3-985d-5a8ee6df32ba* or a string like "Marketing".) If you provide strings, then datahub will attempt to resolve this name to a guid, and will error out if this fails. There can be multiple domain keys specified.',
+    )
+
+    include_table_lineage: bool = pydantic.Field(
+        default=True,
+        description="Option to enable/disable lineage generation.",
+    )
+
+    include_external_lineage: bool = pydantic.Field(
+        default=True,
+        description=(
+            "Option to enable/disable lineage generation for external tables."
+            " Only external S3 tables are supported at the moment."
+        ),
+    )
+
+    include_notebooks: bool = pydantic.Field(
+        default=False,
+        description="Ingest notebooks, represented as DataHub datasets.",
+    )
+
+    include_ownership: bool = pydantic.Field(
+        default=False,
+        description="Option to enable/disable ownership generation for metastores, catalogs, schemas, and tables.",
+    )
+
+    include_tags: bool = pydantic.Field(
+        default=INCLUDE_TAGS_DEFAULT,
+        description=(
+            "Option to enable/disable column/table tag extraction. "
+            "Requires warehouse_id to be set since tag extraction needs to query system.information_schema.tags. "
+            "If warehouse_id is not provided, this will be automatically disabled to allow ingestion to continue."
+        ),
+    )
+
+    _rename_table_ownership = pydantic_renamed_field(
+        "include_table_ownership", "include_ownership"
+    )
+
+    include_column_lineage: bool = pydantic.Field(
+        default=True,
+        description="Option to enable/disable lineage generation. Currently we have to call a rest call per column to get column level lineage due to the Databrick api which can slow down ingestion. ",
+    )
+
+    lineage_data_source: LineageDataSource = pydantic.Field(
+        default=LineageDataSource.AUTO,
+        description=(
+            "Source for lineage data extraction. Options: "
+            f"'{LineageDataSource.AUTO.value}' - Use system tables when SQL warehouse is available, fallback to API; "
+            f"'{LineageDataSource.SYSTEM_TABLES.value}' - Force use of system.access.table_lineage and system.access.column_lineage tables (requires SQL warehouse); "
+            f"'{LineageDataSource.API.value}' - Force use of REST API endpoints for lineage data"
+        ),
+    )
+
+    ignore_start_time_lineage: bool = pydantic.Field(
+        default=False,
+        description="Option to ignore the start_time and retrieve all available lineage. When enabled, the start_time filter will be set to zero to extract all lineage events regardless of the configured time window.",
+    )
+
+    column_lineage_column_limit: int = pydantic.Field(
+        default=300,
+        description="Limit the number of columns to get column level lineage. ",
+    )
+
+    lineage_max_workers: HiddenFromDocs[int] = pydantic.Field(
+        default=5 * (os.cpu_count() or 4),
+        description="Number of worker threads to use for column lineage thread pool executor. Set to 1 to disable.",
+    )
+
+    databricks_api_page_size: int = pydantic.Field(
+        default=0,
+        ge=0,
+        description=(
+            "Page size for Databricks API calls when listing resources (catalogs, schemas, tables, etc.). "
+            "When set to 0 (default), uses server-side configured page length (recommended). "
+            "When set to a positive value, the page length is the minimum of this value and the server configured value. "
+            "Must be a non-negative integer."
+        ),
+    )
+
+    include_usage_statistics: bool = Field(
+        default=True,
+        description="Generate usage statistics.",
+    )
+
+    usage_data_source: UsageDataSource = pydantic.Field(
+        default=UsageDataSource.AUTO,
+        description=(
+            "Source for usage/query history data extraction. Options: "
+            f"'{UsageDataSource.AUTO.value}' (default) - Automatically use system.query.history table when SQL warehouse is configured, otherwise fall back to REST API. "
+            "This provides better performance for multi-workspace setups and large query volumes when warehouse_id is set. "
+            f"'{UsageDataSource.SYSTEM_TABLES.value}' - Force use of system.query.history table (requires SQL warehouse and SELECT permission on system.query.history). "
+            f"'{UsageDataSource.API.value}' - Force use of REST API endpoints for query history (legacy method, may have limitations with multiple workspaces)."
+        ),
+    )
+
+    # TODO: Remove `type:ignore` by refactoring config
+    profiling: Union[
+        UnityCatalogGEProfilerConfig,
+        UnityCatalogAnalyzeProfilerConfig,
+        UnityCatalogSQLAlchemyProfilerConfig,
+    ] = Field(  # type: ignore
+        default=UnityCatalogGEProfilerConfig(),
+        description="Data profiling configuration",
+        discriminator="method",
+    )
+
+    emit_siblings: bool = pydantic.Field(
+        default=True,
+        description="Whether to emit siblings relation with corresponding delta-lake platform's table. If enabled, this will also ingest the corresponding delta-lake table.",
+    )
+
+    delta_lake_options: DeltaLakeDetails = Field(
+        default=DeltaLakeDetails(),
+        description="Details about the delta lake, incase to emit siblings",
+    )
+
+    include_ml_model_aliases: bool = pydantic.Field(
+        default=False,
+        description="Whether to include ML model aliases in the ingestion.",
+    )
+
+    ml_model_max_results: int = pydantic.Field(
+        default=1000,
+        ge=0,
+        description="Maximum number of ML models to ingest.",
+    )
+
+    _forced_disable_tag_extraction: bool = pydantic.PrivateAttr(default=False)
+    _forced_disable_hive_metastore_extraction = pydantic.PrivateAttr(default=False)
+
+    include_hive_metastore: bool = pydantic.Field(
+        default=INCLUDE_HIVE_METASTORE_DEFAULT,
+        description="Whether to ingest legacy `hive_metastore` catalog. This requires executing queries on SQL warehouse.",
+    )
+
+    workspace_name: Optional[str] = pydantic.Field(
+        default=None,
+        description="Name of the workspace. Default to deployment name present in workspace_url",
+    )
+
+    def __init__(self, **data):
+        # First, let the parent handle the root validators and field processing
+        super().__init__(**data)
+
+        # After model creation, check if we need to auto-disable features
+        # based on the final warehouse_id value (which may have been set by root validators)
+        include_tags_original = data.get("include_tags", INCLUDE_TAGS_DEFAULT)
+        include_hive_metastore_original = data.get(
+            "include_hive_metastore", INCLUDE_HIVE_METASTORE_DEFAULT
+        )
+
+        # Track what we're force-disabling
+        forced_disable_tag_extraction = False
+        forced_disable_hive_metastore_extraction = False
+
+        # Check if features should be auto-disabled based on final warehouse_id
+        if include_tags_original and not self.warehouse_id:
+            forced_disable_tag_extraction = True
+            self.include_tags = False  # Modify the model attribute directly
+            logger.warning(
+                "warehouse_id is not set but include_tags=True. "
+                "Automatically disabling tag extraction since it requires SQL queries. "
+                "Set warehouse_id to enable tag extraction."
+            )
+
+        if include_hive_metastore_original and not self.warehouse_id:
+            forced_disable_hive_metastore_extraction = True
+            self.include_hive_metastore = False  # Modify the model attribute directly
+            logger.warning(
+                "warehouse_id is not set but include_hive_metastore=True. "
+                "Automatically disabling hive metastore extraction since it requires SQL queries. "
+                "Set warehouse_id to enable hive metastore extraction."
+            )
+
+        # Set private attributes
+        self._forced_disable_tag_extraction = forced_disable_tag_extraction
+        self._forced_disable_hive_metastore_extraction = (
+            forced_disable_hive_metastore_extraction
+        )
+
+    def is_profiling_enabled(self) -> bool:
+        return self.profiling.enabled and is_profiling_enabled(
+            self.profiling.operation_config
+        )
+
+    def is_ge_profiling(self) -> bool:
+        return self.profiling.method == "ge"
+
+    stateful_ingestion: Optional[StatefulStaleMetadataRemovalConfig] = pydantic.Field(
+        default=None, description="Unity Catalog Stateful Ingestion Config."
+    )
+
+    @field_validator("start_time", mode="after")
+    @classmethod
+    def within_thirty_days(cls, v: datetime) -> datetime:
+        if (datetime.now(timezone.utc) - v).days > 30:
+            raise ValueError("Query history is only maintained for 30 days.")
+        return v
+
+    @field_validator("workspace_url", mode="after")
+    @classmethod
+    def workspace_url_should_start_with_http_scheme(cls, workspace_url: str) -> str:
+        if not workspace_url.lower().startswith(("http://", "https://")):
+            raise ValueError(
+                "Workspace URL must start with http scheme. e.g. https://my-workspace.cloud.databricks.com"
+            )
+        return workspace_url
+
+    @field_validator("include_metastore", mode="after")
+    @classmethod
+    def include_metastore_warning(cls, v: bool) -> bool:
+        if v:
+            msg = (
+                "`include_metastore` is enabled."
+                " This is not recommended and this option will be removed in the future, which is a breaking change."
+                " All databricks urns will change if you re-ingest with this disabled."
+                " We recommend soft deleting all databricks data and re-ingesting with `include_metastore` set to `False`."
+            )
+            logger.warning(msg)
+            add_global_warning(msg)
+        return v
+
+    @model_validator(mode="after")
+    def set_warehouse_id_from_profiling(self):
+        profiling = self.profiling
+        if not self.warehouse_id and profiling and profiling.warehouse_id:
+            self.warehouse_id = profiling.warehouse_id
+        if (
+            self.warehouse_id
+            and profiling
+            and profiling.warehouse_id
+            and self.warehouse_id != profiling.warehouse_id
+        ):
+            raise ValueError(
+                "When `warehouse_id` is set, it must match the `warehouse_id` in `profiling`."
+            )
+
+        if self.warehouse_id and profiling and not profiling.warehouse_id:
+            profiling.warehouse_id = self.warehouse_id
+
+        if profiling and profiling.enabled and not profiling.warehouse_id:
+            raise ValueError("warehouse_id must be set when profiling is enabled.")
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_lineage_data_source_with_warehouse(self):
+        lineage_data_source = self.lineage_data_source or LineageDataSource.AUTO
+
+        if (
+            lineage_data_source == LineageDataSource.SYSTEM_TABLES
+            and not self.warehouse_id
+        ):
+            raise ValueError(
+                f"lineage_data_source='{LineageDataSource.SYSTEM_TABLES.value}' requires warehouse_id to be set"
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_usage_data_source_with_warehouse(self):
+        usage_data_source = self.usage_data_source or UsageDataSource.AUTO
+
+        if usage_data_source == UsageDataSource.SYSTEM_TABLES and not self.warehouse_id:
+            raise ValueError(
+                f"usage_data_source='{UsageDataSource.SYSTEM_TABLES.value}' requires warehouse_id to be set"
+            )
+
+        return self
+
+    @field_validator("schema_pattern", mode="after")
+    @classmethod
+    def schema_pattern_should__always_deny_information_schema(
+        cls, v: AllowDenyPattern
+    ) -> AllowDenyPattern:
+        v.deny.append(".*\\.information_schema")
+        return v

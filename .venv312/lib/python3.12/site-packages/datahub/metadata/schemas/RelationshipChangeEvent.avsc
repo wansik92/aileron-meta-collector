@@ -1,0 +1,215 @@
+{
+  "type": "record",
+  "Event": {
+    "name": "relationshipChangeEvent"
+  },
+  "name": "RelationshipChangeEvent",
+  "namespace": "com.linkedin.pegasus2avro.platform.event.v1",
+  "fields": [
+    {
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "KafkaAuditHeader",
+          "namespace": "com.linkedin.events",
+          "fields": [
+            {
+              "compliance": [
+                {
+                  "policy": "EVENT_TIME"
+                }
+              ],
+              "type": "long",
+              "name": "time",
+              "doc": "The time at which the event was emitted into kafka."
+            },
+            {
+              "compliance": "NONE",
+              "type": "string",
+              "name": "server",
+              "doc": "The fully qualified name of the host from which the event is being emitted."
+            },
+            {
+              "compliance": "NONE",
+              "type": [
+                "null",
+                "string"
+              ],
+              "name": "instance",
+              "default": null,
+              "doc": "The instance on the server from which the event is being emitted. e.g. i001"
+            },
+            {
+              "compliance": "NONE",
+              "type": "string",
+              "name": "appName",
+              "doc": "The name of the application from which the event is being emitted. see go/appname"
+            },
+            {
+              "compliance": "NONE",
+              "type": {
+                "type": "fixed",
+                "name": "UUID",
+                "namespace": "com.linkedin.events",
+                "size": 16
+              },
+              "name": "messageId",
+              "doc": "A unique identifier for the message"
+            },
+            {
+              "compliance": "NONE",
+              "type": [
+                "null",
+                "int"
+              ],
+              "name": "auditVersion",
+              "default": null,
+              "doc": "The version that is being used for auditing. In version 0, the audit trail buckets events into 10 minute audit windows based on the EventHeader timestamp. In version 1, the audit trail buckets events as follows: if the schema has an outer KafkaAuditHeader, use the outer audit header timestamp for bucketing; else if the EventHeader has an inner KafkaAuditHeader use that inner audit header's timestamp for bucketing"
+            },
+            {
+              "compliance": "NONE",
+              "type": [
+                "null",
+                "string"
+              ],
+              "name": "fabricUrn",
+              "default": null,
+              "doc": "The fabricUrn of the host from which the event is being emitted. Fabric Urn in the format of urn:li:fabric:{fabric_name}. See go/fabric."
+            },
+            {
+              "compliance": "NONE",
+              "type": [
+                "null",
+                "string"
+              ],
+              "name": "clusterConnectionString",
+              "default": null,
+              "doc": "This is a String that the client uses to establish some kind of connection with the Kafka cluster. The exact format of it depends on specific versions of clients and brokers. This information could potentially identify the fabric and cluster with which the client is producing to or consuming from."
+            }
+          ],
+          "doc": "This header records information about the context of an event as it is emitted into kafka and is intended to be used by the kafka audit application.  For more information see go/kafkaauditheader"
+        }
+      ],
+      "name": "auditHeader",
+      "default": null,
+      "doc": "Kafka audit header containing metadata about the message itself.\nIncludes information like message ID, timestamp, and server details."
+    },
+    {
+      "java": {
+        "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+      },
+      "type": "string",
+      "name": "sourceUrn",
+      "doc": "The URN (Uniform Resource Name) of the source entity in the relationship.\nIn a downstream relationship example, this would be the URN of the upstream dataset.",
+      "Urn": "Urn"
+    },
+    {
+      "java": {
+        "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+      },
+      "type": "string",
+      "name": "destinationUrn",
+      "doc": "The URN of the destination entity in the relationship.\nIn a downstream relationship example, this would be the URN of the downstream dataset.",
+      "Urn": "Urn"
+    },
+    {
+      "type": {
+        "type": "enum",
+        "name": "RelationshipChangeOperation",
+        "namespace": "com.linkedin.pegasus2avro.platform.event.v1",
+        "symbols": [
+          "ADD",
+          "REMOVE",
+          "RESTATE"
+        ]
+      },
+      "name": "operation",
+      "doc": "The operation being performed on this relationship.\nTypically includes operations like ADD, REMOVE, or RESTATE."
+    },
+    {
+      "type": "string",
+      "name": "relationshipType",
+      "doc": "The type/category of relationship being established or modified.\nExamples: \"DownstreamOf\", \"Contains\", \"OwnedBy\", \"DerivedFrom\", etc."
+    },
+    {
+      "type": [
+        "null",
+        "string"
+      ],
+      "name": "lifecycleOwner",
+      "default": null,
+      "doc": "The system or service responsible for managing the lifecycle of this relationship.\nThis helps identify which component has authority over the relationship."
+    },
+    {
+      "type": [
+        "null",
+        "string"
+      ],
+      "name": "via",
+      "default": null,
+      "doc": "Information about how or through what means this relationship was established.\nCould indicate a specific pipeline, process, or tool that discovered/created the relationship."
+    },
+    {
+      "type": [
+        "null",
+        {
+          "type": "map",
+          "values": "string"
+        }
+      ],
+      "name": "properties",
+      "default": null,
+      "doc": "Additional custom properties associated with this relationship.\nAllows for flexible extension without changing the schema."
+    },
+    {
+      "type": {
+        "type": "record",
+        "name": "AuditStamp",
+        "namespace": "com.linkedin.pegasus2avro.common",
+        "fields": [
+          {
+            "type": "long",
+            "name": "time",
+            "doc": "When did the resource/association/sub-resource move into the specific lifecycle stage represented by this AuditEvent."
+          },
+          {
+            "java": {
+              "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+            },
+            "type": "string",
+            "name": "actor",
+            "doc": "The entity (e.g. a member URN) which will be credited for moving the resource/association/sub-resource into the specific lifecycle stage. It is also the one used to authorize the change.",
+            "Urn": "Urn"
+          },
+          {
+            "java": {
+              "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+            },
+            "type": [
+              "null",
+              "string"
+            ],
+            "name": "impersonator",
+            "default": null,
+            "doc": "The entity (e.g. a service URN) which performs the change on behalf of the Actor and must be authorized to act as the Actor.",
+            "Urn": "Urn"
+          },
+          {
+            "type": [
+              "null",
+              "string"
+            ],
+            "name": "message",
+            "default": null,
+            "doc": "Additional context around how DataHub was informed of the particular change. For example: was the change created by an automated process, or manually."
+          }
+        ],
+        "doc": "Data captured on a resource/association/sub-resource level giving insight into when that resource/association/sub-resource moved into a particular lifecycle stage, and who acted to move it into that specific lifecycle stage."
+      },
+      "name": "auditStamp",
+      "doc": "Stores information about who made this change and when.\nContains the actor (user or system) that performed the action and the timestamp."
+    }
+  ],
+  "doc": "Kafka event for proposing a relationship change between two entities.\nFor example, when dataset1 establishes a new downstream relationship with dataset2."
+}

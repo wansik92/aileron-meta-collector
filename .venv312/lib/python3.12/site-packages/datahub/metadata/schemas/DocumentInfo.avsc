@@ -1,0 +1,407 @@
+{
+  "type": "record",
+  "Aspect": {
+    "name": "documentInfo"
+  },
+  "name": "DocumentInfo",
+  "namespace": "com.linkedin.pegasus2avro.knowledge",
+  "fields": [
+    {
+      "Searchable": {
+        "/*": {
+          "fieldType": "TEXT",
+          "queryByDefault": true
+        }
+      },
+      "type": {
+        "type": "map",
+        "values": "string"
+      },
+      "name": "customProperties",
+      "default": {},
+      "doc": "Custom property bag."
+    },
+    {
+      "Searchable": {
+        "boostScore": 10.0,
+        "enableAutocomplete": true,
+        "fieldNameAliases": [
+          "_entityName"
+        ],
+        "fieldType": "WORD_GRAM",
+        "searchLabel": "entityName",
+        "searchTier": 1
+      },
+      "type": [
+        "null",
+        "string"
+      ],
+      "name": "title",
+      "default": null,
+      "doc": "Optional title for the document. "
+    },
+    {
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "DocumentSource",
+          "namespace": "com.linkedin.pegasus2avro.knowledge",
+          "fields": [
+            {
+              "Searchable": {
+                "fieldType": "KEYWORD",
+                "queryByDefault": false
+              },
+              "type": {
+                "type": "enum",
+                "symbolDocs": {
+                  "EXTERNAL": "External - The document was ingested from an external source. ",
+                  "NATIVE": "Created via the DataHub UI or API"
+                },
+                "name": "DocumentSourceType",
+                "namespace": "com.linkedin.pegasus2avro.knowledge",
+                "symbols": [
+                  "NATIVE",
+                  "EXTERNAL"
+                ]
+              },
+              "name": "sourceType",
+              "doc": "The type of the source (e.g., \"Confluence\", \"Notion\", \"Google Docs\", \"SharePoint\", \"Slack\")"
+            },
+            {
+              "Searchable": {
+                "fieldType": "KEYWORD",
+                "queryByDefault": false
+              },
+              "type": [
+                "null",
+                "string"
+              ],
+              "name": "externalUrl",
+              "default": null,
+              "doc": "URL to the external source where this document originated"
+            },
+            {
+              "Searchable": {
+                "fieldType": "KEYWORD",
+                "queryByDefault": false
+              },
+              "type": [
+                "null",
+                "string"
+              ],
+              "name": "externalId",
+              "default": null,
+              "doc": "Unique identifier in the external system. Searchable in case we need to find ingested docs via filtering."
+            }
+          ],
+          "doc": "Information about the source of a document, especially for externally sourced documents.\nThis record is embedded within DocumentInfo to track whether a document is first-party \n(created in DataHub) or third-party (ingested from external sources like Slack, Notion, etc.)"
+        }
+      ],
+      "name": "source",
+      "default": null,
+      "doc": "Information about the external source of this document. \nOnly populated for third-party documents ingested from external systems."
+    },
+    {
+      "type": {
+        "type": "record",
+        "name": "DocumentStatus",
+        "namespace": "com.linkedin.pegasus2avro.knowledge",
+        "fields": [
+          {
+            "Searchable": {
+              "fieldType": "KEYWORD",
+              "queryByDefault": false
+            },
+            "type": {
+              "type": "enum",
+              "symbolDocs": {
+                "PUBLISHED": "Document is published and visible to others.",
+                "UNPUBLISHED": "Document is not published to be consumed by others."
+              },
+              "name": "DocumentState",
+              "namespace": "com.linkedin.pegasus2avro.knowledge",
+              "symbols": [
+                "PUBLISHED",
+                "UNPUBLISHED"
+              ],
+              "doc": "The state of a document"
+            },
+            "name": "state",
+            "doc": "The current visibility state of the document"
+          }
+        ],
+        "doc": "Visibility status information for a document"
+      },
+      "name": "status",
+      "doc": "Status of the document (published, unpublished.)"
+    },
+    {
+      "type": {
+        "type": "record",
+        "name": "DocumentContents",
+        "namespace": "com.linkedin.pegasus2avro.knowledge",
+        "fields": [
+          {
+            "Searchable": {
+              "fieldType": "TEXT"
+            },
+            "type": "string",
+            "name": "text",
+            "doc": "The text contents of the document.\nThis needs to be added to semantic search! "
+          }
+        ],
+        "doc": "The contents of a document"
+      },
+      "name": "contents",
+      "doc": "Content of the document"
+    },
+    {
+      "Searchable": {
+        "/actor": {
+          "fieldName": "creator",
+          "fieldType": "URN",
+          "queryByDefault": false
+        },
+        "/time": {
+          "fieldName": "createdAt",
+          "fieldType": "DATETIME",
+          "queryByDefault": false
+        }
+      },
+      "type": {
+        "type": "record",
+        "name": "AuditStamp",
+        "namespace": "com.linkedin.pegasus2avro.common",
+        "fields": [
+          {
+            "type": "long",
+            "name": "time",
+            "doc": "When did the resource/association/sub-resource move into the specific lifecycle stage represented by this AuditEvent."
+          },
+          {
+            "java": {
+              "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+            },
+            "type": "string",
+            "name": "actor",
+            "doc": "The entity (e.g. a member URN) which will be credited for moving the resource/association/sub-resource into the specific lifecycle stage. It is also the one used to authorize the change.",
+            "Urn": "Urn"
+          },
+          {
+            "java": {
+              "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+            },
+            "type": [
+              "null",
+              "string"
+            ],
+            "name": "impersonator",
+            "default": null,
+            "doc": "The entity (e.g. a service URN) which performs the change on behalf of the Actor and must be authorized to act as the Actor.",
+            "Urn": "Urn"
+          },
+          {
+            "type": [
+              "null",
+              "string"
+            ],
+            "name": "message",
+            "default": null,
+            "doc": "Additional context around how DataHub was informed of the particular change. For example: was the change created by an automated process, or manually."
+          }
+        ],
+        "doc": "Data captured on a resource/association/sub-resource level giving insight into when that resource/association/sub-resource moved into a particular lifecycle stage, and who acted to move it into that specific lifecycle stage."
+      },
+      "name": "created",
+      "doc": "The time and actor who created the document"
+    },
+    {
+      "Searchable": {
+        "/actor": {
+          "fieldName": "lastModifiedBy",
+          "fieldType": "URN",
+          "queryByDefault": false
+        },
+        "/time": {
+          "addToFilters": false,
+          "fieldName": "lastModifiedAt",
+          "fieldType": "DATETIME",
+          "queryByDefault": false
+        }
+      },
+      "type": "com.linkedin.pegasus2avro.common.AuditStamp",
+      "name": "lastModified",
+      "doc": "The time and actor who last modified the document (any field)"
+    },
+    {
+      "type": [
+        "null",
+        {
+          "type": "array",
+          "items": {
+            "type": "record",
+            "name": "RelatedAsset",
+            "namespace": "com.linkedin.pegasus2avro.knowledge",
+            "fields": [
+              {
+                "Relationship": {
+                  "entityTypes": [
+                    "container",
+                    "dataset",
+                    "dataJob",
+                    "dataFlow",
+                    "dashboard",
+                    "chart",
+                    "application",
+                    "mlModel",
+                    "mlModelGroup",
+                    "mlPrimaryKey",
+                    "mlFeature",
+                    "mlFeatureTable",
+                    "dataProduct",
+                    "domain",
+                    "glossaryTerm",
+                    "glossaryNode",
+                    "tag",
+                    "structuredProperty",
+                    "mlModel",
+                    "mlModelGroup",
+                    "mlPrimaryKey",
+                    "mlFeature",
+                    "mlFeatureTable"
+                  ],
+                  "name": "RelatedAsset"
+                },
+                "Searchable": {
+                  "fieldName": "relatedAssets",
+                  "fieldType": "URN",
+                  "queryByDefault": false
+                },
+                "java": {
+                  "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+                },
+                "type": "string",
+                "name": "asset",
+                "doc": "The asset referenced by or related to the document. ",
+                "Urn": "Urn",
+                "entityTypes": [
+                  "container",
+                  "dataset",
+                  "dataJob",
+                  "dataFlow",
+                  "dashboard",
+                  "chart",
+                  "application",
+                  "mlModel",
+                  "mlModelGroup",
+                  "mlPrimaryKey",
+                  "mlFeature",
+                  "mlFeatureTable",
+                  "dataProduct",
+                  "domain",
+                  "glossaryTerm",
+                  "glossaryNode",
+                  "tag",
+                  "structuredProperty",
+                  "mlModel",
+                  "mlModelGroup",
+                  "mlPrimaryKey",
+                  "mlFeature",
+                  "mlFeatureTable"
+                ]
+              }
+            ],
+            "doc": "A data asset referenced by a document."
+          }
+        }
+      ],
+      "name": "relatedAssets",
+      "default": null,
+      "doc": "Assets referenced by or related to this document. "
+    },
+    {
+      "type": [
+        "null",
+        {
+          "type": "array",
+          "items": {
+            "type": "record",
+            "name": "RelatedDocument",
+            "namespace": "com.linkedin.pegasus2avro.knowledge",
+            "fields": [
+              {
+                "Relationship": {
+                  "entityTypes": [
+                    "document"
+                  ],
+                  "name": "RelatedDocument"
+                },
+                "Searchable": {
+                  "fieldName": "relatedDocuments",
+                  "fieldType": "URN",
+                  "queryByDefault": false
+                },
+                "java": {
+                  "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+                },
+                "type": "string",
+                "name": "document",
+                "doc": "The document referenced by or related to the document. ",
+                "Urn": "Urn",
+                "entityTypes": [
+                  "document"
+                ]
+              }
+            ],
+            "doc": "An document referenced by or related to another document\nNote that this does NOT include child documents. "
+          }
+        }
+      ],
+      "name": "relatedDocuments",
+      "default": null,
+      "doc": "Documents referenced by or related to this document. "
+    },
+    {
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "ParentDocument",
+          "namespace": "com.linkedin.pegasus2avro.knowledge",
+          "fields": [
+            {
+              "Relationship": {
+                "entityTypes": [
+                  "document"
+                ],
+                "name": "IsChildOf"
+              },
+              "Searchable": {
+                "fieldName": "parentDocument",
+                "fieldType": "URN",
+                "queryByDefault": false
+              },
+              "java": {
+                "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+              },
+              "type": "string",
+              "name": "document",
+              "doc": "The hierarchical parent document for this document. ",
+              "Urn": "Urn",
+              "entityTypes": [
+                "document"
+              ]
+            }
+          ],
+          "doc": "The parent document of the document. "
+        }
+      ],
+      "name": "parentDocument",
+      "default": null,
+      "doc": "Parent article for this asset. "
+    }
+  ],
+  "doc": "Information about a document"
+}

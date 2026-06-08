@@ -1,0 +1,21 @@
+{
+  "type": "record",
+  "Aspect": {
+    "name": "dataHubPageTemplateKey",
+    "keyForEntity": "dataHubPageTemplate",
+    "entityCategory": "core",
+    "entityAspects": [
+      "dataHubPageTemplateProperties"
+    ]
+  },
+  "name": "DataHubPageTemplateKey",
+  "namespace": "com.linkedin.pegasus2avro.metadata.key",
+  "fields": [
+    {
+      "type": "string",
+      "name": "id",
+      "doc": "Unique id for the template."
+    }
+  ],
+  "doc": "Key for a DataHubPageTemplate"
+}

@@ -1,0 +1,79 @@
+{
+  "type": "record",
+  "Aspect": {
+    "name": "documentSettings"
+  },
+  "name": "DocumentSettings",
+  "namespace": "com.linkedin.pegasus2avro.knowledge",
+  "fields": [
+    {
+      "Searchable": {
+        "fieldType": "BOOLEAN",
+        "queryByDefault": false
+      },
+      "type": "boolean",
+      "name": "showInGlobalContext",
+      "default": true,
+      "doc": "Whether or not this document should be visible in the global context (e.g., global navigation, knowledge base search).\nWhen false, the document is \"private\" and accessible primarily through the assets it is related to.\nWhen true, the document appears in the global documents space accessible to all users."
+    },
+    {
+      "Searchable": {
+        "/time": {
+          "fieldName": "lastModifiedSettings",
+          "fieldType": "DATETIME"
+        }
+      },
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "AuditStamp",
+          "namespace": "com.linkedin.pegasus2avro.common",
+          "fields": [
+            {
+              "type": "long",
+              "name": "time",
+              "doc": "When did the resource/association/sub-resource move into the specific lifecycle stage represented by this AuditEvent."
+            },
+            {
+              "java": {
+                "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+              },
+              "type": "string",
+              "name": "actor",
+              "doc": "The entity (e.g. a member URN) which will be credited for moving the resource/association/sub-resource into the specific lifecycle stage. It is also the one used to authorize the change.",
+              "Urn": "Urn"
+            },
+            {
+              "java": {
+                "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+              },
+              "type": [
+                "null",
+                "string"
+              ],
+              "name": "impersonator",
+              "default": null,
+              "doc": "The entity (e.g. a service URN) which performs the change on behalf of the Actor and must be authorized to act as the Actor.",
+              "Urn": "Urn"
+            },
+            {
+              "type": [
+                "null",
+                "string"
+              ],
+              "name": "message",
+              "default": null,
+              "doc": "Additional context around how DataHub was informed of the particular change. For example: was the change created by an automated process, or manually."
+            }
+          ],
+          "doc": "Data captured on a resource/association/sub-resource level giving insight into when that resource/association/sub-resource moved into a particular lifecycle stage, and who acted to move it into that specific lifecycle stage."
+        }
+      ],
+      "name": "lastModified",
+      "default": null,
+      "doc": "Last Modified Audit stamp"
+    }
+  ],
+  "doc": "Settings specific to a document entity"
+}

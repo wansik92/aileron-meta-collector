@@ -1,0 +1,35 @@
+{
+  "type": "record",
+  "Aspect": {
+    "name": "documentKey",
+    "keyForEntity": "document",
+    "entityCategory": "core",
+    "entityAspects": [
+      "documentInfo",
+      "documentSettings",
+      "status",
+      "ownership",
+      "domains",
+      "structuredProperties",
+      "subTypes",
+      "dataPlatformInstance",
+      "browsePathsV2",
+      "globalTags",
+      "glossaryTerms",
+      "semanticContent",
+      "institutionalMemory",
+      "documentation"
+    ]
+  },
+  "name": "DocumentKey",
+  "namespace": "com.linkedin.pegasus2avro.metadata.key",
+  "fields": [
+    {
+      "Searchable": {},
+      "type": "string",
+      "name": "id",
+      "doc": "Unique identifier for the document."
+    }
+  ],
+  "doc": "Key for a Document"
+}

@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 _EMIT_MAX_WORKERS = 2
 _executor = ThreadPoolExecutor(max_workers=_EMIT_MAX_WORKERS, thread_name_prefix="aileron-emit")
+_emitter: "DatahubRestEmitter | None" = None
 
 
 def flush_emit(timeout: float = 30.0) -> None:
@@ -63,12 +64,15 @@ def _check_datahub() -> None:
 
 
 def _get_emitter() -> "DatahubRestEmitter":
+    global _emitter
     _check_datahub()
-    return DatahubRestEmitter(
-        gms_server=DATAHUB_GMS_URL,
-        connect_timeout_sec=DATAHUB_CONNECT_TIMEOUT_SEC,
-        retry_max_times=DATAHUB_RETRY_MAX_TIMES,
-    )
+    if _emitter is None:
+        _emitter = DatahubRestEmitter(
+            gms_server=DATAHUB_GMS_URL,
+            connect_timeout_sec=DATAHUB_CONNECT_TIMEOUT_SEC,
+            retry_max_times=DATAHUB_RETRY_MAX_TIMES,
+        )
+    return _emitter
 
 
 def _safe_emit(emitter, mcps: list) -> None:

@@ -1,0 +1,38 @@
+{
+  "type": "record",
+  "Aspect": {
+    "name": "applications"
+  },
+  "name": "Applications",
+  "namespace": "com.linkedin.pegasus2avro.application",
+  "fields": [
+    {
+      "Relationship": {
+        "/*": {
+          "entityTypes": [
+            "application"
+          ],
+          "name": "AssociatedWith"
+        }
+      },
+      "Searchable": {
+        "/*": {
+          "addToFilters": true,
+          "fieldName": "applications",
+          "fieldType": "URN",
+          "filterNameOverride": "Application",
+          "hasValuesFieldName": "hasApplication"
+        }
+      },
+      "type": {
+        "type": "array",
+        "items": "string"
+      },
+      "name": "applications",
+      "doc": "The Applications attached to an Asset",
+      "Urn": "Urn",
+      "urn_is_array": true
+    }
+  ],
+  "doc": "Links from an Asset to its Applications"
+}

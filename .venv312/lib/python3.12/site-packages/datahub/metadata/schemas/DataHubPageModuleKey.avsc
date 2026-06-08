@@ -1,0 +1,21 @@
+{
+  "type": "record",
+  "Aspect": {
+    "name": "dataHubPageModuleKey",
+    "keyForEntity": "dataHubPageModule",
+    "entityCategory": "core",
+    "entityAspects": [
+      "dataHubPageModuleProperties"
+    ]
+  },
+  "name": "DataHubPageModuleKey",
+  "namespace": "com.linkedin.pegasus2avro.metadata.key",
+  "fields": [
+    {
+      "type": "string",
+      "name": "id",
+      "doc": "Unique id for the module."
+    }
+  ],
+  "doc": "Key for a DataHubPageModule"
+}

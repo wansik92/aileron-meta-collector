@@ -1,0 +1,76 @@
+{
+  "type": "record",
+  "Aspect": {
+    "name": "applicationProperties"
+  },
+  "name": "ApplicationProperties",
+  "namespace": "com.linkedin.pegasus2avro.application",
+  "fields": [
+    {
+      "Searchable": {
+        "/*": {
+          "fieldType": "TEXT",
+          "queryByDefault": true
+        }
+      },
+      "type": {
+        "type": "map",
+        "values": "string"
+      },
+      "name": "customProperties",
+      "default": {},
+      "doc": "Custom property bag."
+    },
+    {
+      "Searchable": {
+        "fieldType": "KEYWORD"
+      },
+      "java": {
+        "class": "com.linkedin.pegasus2avro.common.url.Url",
+        "coercerClass": "com.linkedin.pegasus2avro.common.url.UrlCoercer"
+      },
+      "type": [
+        "null",
+        "string"
+      ],
+      "name": "externalUrl",
+      "default": null,
+      "doc": "URL where the reference exist"
+    },
+    {
+      "Searchable": {
+        "boostScore": 10.0,
+        "enableAutocomplete": true,
+        "fieldNameAliases": [
+          "_entityName"
+        ],
+        "fieldType": "WORD_GRAM",
+        "searchLabel": "entityName",
+        "searchTier": 1
+      },
+      "type": [
+        "null",
+        "string"
+      ],
+      "name": "name",
+      "default": null,
+      "doc": "Display name of the Application"
+    },
+    {
+      "Searchable": {
+        "fieldType": "TEXT",
+        "hasValuesFieldName": "hasDescription",
+        "sanitizeRichText": true,
+        "searchTier": 2
+      },
+      "type": [
+        "null",
+        "string"
+      ],
+      "name": "description",
+      "default": null,
+      "doc": "Documentation of the application"
+    }
+  ],
+  "doc": "The main properties of an Application"
+}

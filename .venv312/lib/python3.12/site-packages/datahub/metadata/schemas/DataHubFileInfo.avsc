@@ -1,0 +1,234 @@
+{
+  "type": "record",
+  "Aspect": {
+    "name": "dataHubFileInfo"
+  },
+  "name": "DataHubFileInfo",
+  "namespace": "com.linkedin.pegasus2avro.file",
+  "fields": [
+    {
+      "type": {
+        "type": "record",
+        "name": "BucketStorageLocation",
+        "namespace": "com.linkedin.pegasus2avro.file",
+        "fields": [
+          {
+            "Searchable": {
+              "fieldType": "KEYWORD"
+            },
+            "type": "string",
+            "name": "storageBucket",
+            "doc": "The storage bucket this file is stored in"
+          },
+          {
+            "Searchable": {
+              "fieldType": "KEYWORD"
+            },
+            "type": "string",
+            "name": "storageKey",
+            "doc": "The key for where this file is stored inside of the given bucket"
+          }
+        ],
+        "doc": "Information where a file is stored"
+      },
+      "name": "bucketStorageLocation",
+      "doc": "Info about where a file is stored"
+    },
+    {
+      "Searchable": {
+        "fieldType": "TEXT_PARTIAL"
+      },
+      "type": "string",
+      "name": "originalFileName",
+      "doc": "The original filename as uploaded by the user"
+    },
+    {
+      "Searchable": {
+        "fieldType": "KEYWORD"
+      },
+      "type": "string",
+      "name": "mimeType",
+      "doc": "MIME type of the file (e.g., image/png, application/pdf)"
+    },
+    {
+      "type": "long",
+      "name": "sizeInBytes",
+      "doc": "Size of the file in bytes"
+    },
+    {
+      "Searchable": {
+        "fieldType": "KEYWORD"
+      },
+      "type": {
+        "type": "enum",
+        "symbolDocs": {
+          "ASSET_DOCUMENTATION": "File uploaded for entity documentation",
+          "ASSET_DOCUMENTATION_LINKS": "Upload for asset documentation links."
+        },
+        "name": "FileUploadScenario",
+        "namespace": "com.linkedin.pegasus2avro.file",
+        "symbols": [
+          "ASSET_DOCUMENTATION",
+          "ASSET_DOCUMENTATION_LINKS"
+        ]
+      },
+      "name": "scenario",
+      "doc": "The scenario/context in which this file was uploaded"
+    },
+    {
+      "Relationship": {
+        "entityTypes": [
+          "dataset",
+          "chart",
+          "container",
+          "dashboard",
+          "dataFlow",
+          "dataJob",
+          "glossaryTerm",
+          "glossaryNode",
+          "mlModel",
+          "mlFeature",
+          "notebook",
+          "mlFeatureTable",
+          "mlPrimaryKey",
+          "mlModelGroup",
+          "domain",
+          "dataProduct",
+          "businessAttribute",
+          "document"
+        ],
+        "name": "ReferencedBy"
+      },
+      "Searchable": {
+        "fieldType": "URN"
+      },
+      "java": {
+        "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+      },
+      "type": [
+        "null",
+        "string"
+      ],
+      "name": "referencedByAsset",
+      "default": null,
+      "doc": "Optional URN of the entity this file is associated with (e.g., the dataset whose docs contain this file)",
+      "Urn": "Urn",
+      "entityTypes": [
+        "dataset",
+        "chart",
+        "container",
+        "dashboard",
+        "dataFlow",
+        "dataJob",
+        "glossaryTerm",
+        "glossaryNode",
+        "mlModel",
+        "mlFeature",
+        "notebook",
+        "mlFeatureTable",
+        "mlPrimaryKey",
+        "mlModelGroup",
+        "domain",
+        "dataProduct",
+        "businessAttribute",
+        "document"
+      ]
+    },
+    {
+      "Relationship": {
+        "entityTypes": [
+          "schemaField"
+        ],
+        "name": "ReferencedBy"
+      },
+      "Searchable": {
+        "fieldType": "URN"
+      },
+      "java": {
+        "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+      },
+      "type": [
+        "null",
+        "string"
+      ],
+      "name": "schemaField",
+      "default": null,
+      "doc": "The dataset schema field urn this file is referenced by",
+      "Urn": "Urn",
+      "entityTypes": [
+        "schemaField"
+      ]
+    },
+    {
+      "Searchable": {
+        "/actor": {
+          "fieldName": "createdBy",
+          "fieldType": "URN"
+        },
+        "/time": {
+          "fieldName": "createdAt",
+          "fieldType": "DATETIME"
+        }
+      },
+      "type": {
+        "type": "record",
+        "name": "AuditStamp",
+        "namespace": "com.linkedin.pegasus2avro.common",
+        "fields": [
+          {
+            "type": "long",
+            "name": "time",
+            "doc": "When did the resource/association/sub-resource move into the specific lifecycle stage represented by this AuditEvent."
+          },
+          {
+            "java": {
+              "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+            },
+            "type": "string",
+            "name": "actor",
+            "doc": "The entity (e.g. a member URN) which will be credited for moving the resource/association/sub-resource into the specific lifecycle stage. It is also the one used to authorize the change.",
+            "Urn": "Urn"
+          },
+          {
+            "java": {
+              "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+            },
+            "type": [
+              "null",
+              "string"
+            ],
+            "name": "impersonator",
+            "default": null,
+            "doc": "The entity (e.g. a service URN) which performs the change on behalf of the Actor and must be authorized to act as the Actor.",
+            "Urn": "Urn"
+          },
+          {
+            "type": [
+              "null",
+              "string"
+            ],
+            "name": "message",
+            "default": null,
+            "doc": "Additional context around how DataHub was informed of the particular change. For example: was the change created by an automated process, or manually."
+          }
+        ],
+        "doc": "Data captured on a resource/association/sub-resource level giving insight into when that resource/association/sub-resource moved into a particular lifecycle stage, and who acted to move it into that specific lifecycle stage."
+      },
+      "name": "created",
+      "doc": "Timestamp when this file was created and by whom"
+    },
+    {
+      "Searchable": {
+        "fieldType": "KEYWORD"
+      },
+      "type": [
+        "null",
+        "string"
+      ],
+      "name": "contentHash",
+      "default": null,
+      "doc": "SHA-256 hash of file contents"
+    }
+  ],
+  "doc": "Information about a DataHub file - a file stored in S3 for use within DataHub platform features like documentation, home pages, and announcements."
+}

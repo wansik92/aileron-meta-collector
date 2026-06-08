@@ -1,0 +1,123 @@
+{
+  "type": "record",
+  "Aspect": {
+    "name": "semanticContent"
+  },
+  "name": "SemanticContent",
+  "namespace": "com.linkedin.pegasus2avro.common",
+  "fields": [
+    {
+      "type": {
+        "type": "map",
+        "values": {
+          "type": "record",
+          "name": "EmbeddingModelData",
+          "namespace": "com.linkedin.pegasus2avro.common",
+          "fields": [
+            {
+              "type": "string",
+              "name": "modelVersion",
+              "doc": "Full model identifier including provider.\nExamples: bedrock/cohere.embed-english-v3, openai/text-embedding-ada-002"
+            },
+            {
+              "type": "long",
+              "name": "generatedAt",
+              "doc": "Timestamp when embeddings were generated (milliseconds since epoch)."
+            },
+            {
+              "type": [
+                "null",
+                "string"
+              ],
+              "name": "chunkingStrategy",
+              "default": null,
+              "doc": "Description of the chunking strategy used.\nExamples: sentence_boundary_400t, fixed_512_chars, paragraph"
+            },
+            {
+              "type": "int",
+              "name": "totalChunks",
+              "doc": "Total number of chunks."
+            },
+            {
+              "type": [
+                "null",
+                "int"
+              ],
+              "name": "totalTokens",
+              "default": null,
+              "doc": "Estimated total token count across all chunks."
+            },
+            {
+              "type": {
+                "type": "array",
+                "items": {
+                  "type": "record",
+                  "name": "EmbeddingChunk",
+                  "namespace": "com.linkedin.pegasus2avro.common",
+                  "fields": [
+                    {
+                      "type": "int",
+                      "name": "position",
+                      "doc": "Zero-based position/index of this chunk within the document."
+                    },
+                    {
+                      "type": {
+                        "type": "array",
+                        "items": "float"
+                      },
+                      "name": "vector",
+                      "doc": "The embedding vector for this chunk.\nDimensionality depends on the model (e.g., 1024 for Cohere v3)."
+                    },
+                    {
+                      "type": [
+                        "null",
+                        "int"
+                      ],
+                      "name": "characterOffset",
+                      "default": null,
+                      "doc": "Character offset from start of source text.\nUsed for highlighting and navigation. Optional for privacy."
+                    },
+                    {
+                      "type": [
+                        "null",
+                        "int"
+                      ],
+                      "name": "characterLength",
+                      "default": null,
+                      "doc": "Character length of the chunk in source text.\nOptional for privacy-sensitive use cases."
+                    },
+                    {
+                      "type": [
+                        "null",
+                        "int"
+                      ],
+                      "name": "tokenCount",
+                      "default": null,
+                      "doc": "Estimated token count for this chunk."
+                    },
+                    {
+                      "type": [
+                        "null",
+                        "string"
+                      ],
+                      "name": "text",
+                      "default": null,
+                      "doc": "Original text of this chunk.\nOPTIONAL: May be omitted for privacy-sensitive data sources\nwhere only embeddings should be stored, not source text."
+                    }
+                  ],
+                  "doc": "A single chunk of text with its embedding vector.\n\nChunks enable semantic search over long documents by breaking them\ninto smaller, semantically coherent pieces that fit within model\ncontext windows."
+                }
+              },
+              "name": "chunks",
+              "doc": "Individual chunks with their embedding vectors."
+            }
+          ],
+          "doc": "Embedding data for a specific model.\nContains metadata about the embedding generation and the chunked vectors."
+        }
+      },
+      "name": "embeddings",
+      "doc": "Map of embedding model name to embedding data.\nKey is the model identifier (e.g., cohere_embed_v3, openai_ada_002).\nAllows storing embeddings from multiple models simultaneously."
+    }
+  ],
+  "doc": "Semantic content for enabling vector similarity search.\n\nThis aspect stores chunked text and embedding vectors for any entity that supports semantic search. Generation of the data for this aspect should be built in tight collaboration with the embedding generator during semantic search query processing. Chunk determination and generation can happen somewhat independently\nThe data in this aspect is directly passed along to the semantic search index.\n\nDesign notes:\n- Supports multiple embedding models (e.g., different providers or versions)\n- Supports chunked content for long documents\n- Text field is optional to support privacy-sensitive use cases where\n  only embeddings (not source text) are shared with DataHub"
+}

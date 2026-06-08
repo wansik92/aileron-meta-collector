@@ -1,0 +1,249 @@
+h1. AI Agent와 함께한 오픈소스 개발기
+
+{info}Claude Code로 aileron-meta-collector 만들기{info}
+
+----
+
+h2. 목차
+
+# [DataHub란?|#datahub]
+# [무엇을 만들었나|#what]
+# [왜 만들었나|#why]
+# [개발 과정|#process]
+# [핵심 아키텍처|#architecture]
+# [AI Agent 사용 후기|#review]
+# [결론|#conclusion]
+
+----
+
+h2. 1. DataHub란?
+
+*DataHub*는 LinkedIn이 개발하고 오픈소스로 공개한 *메타데이터 관리 플랫폼*
+
+데이터 조직이 커질수록 "이 데이터가 어디서 왔고, 어디로 가는지"를 파악하기 어려워짐.
+DataHub는 이 문제를 해결하기 위해 데이터 자산의 정보를 한 곳에서 관리.
+
+h3. 주요 기능
+
+|| 기능 || 설명 ||
+| *Data Lineage* | 데이터가 어떤 파이프라인을 거쳐 생성됐는지 시각화 |
+| *Data Discovery* | 테이블, 컬럼, 설명을 검색하여 필요한 데이터를 빠르게 탐색 |
+| *Data Governance* | Glossary Term, Owner, Tag 등으로 데이터 자산 관리 |
+| *Data Quality* | Assertion을 통한 데이터 품질 모니터링 |
+
+h3. Lineage 예시
+
+{code}
+raw.orders ──→ staging.orders ──→ dw.order_items ──→ analytics.customer_orders
+                                        │
+                                        └──→ analytics.daily_summary ──→ s3://dw-export/
+{code}
+
+DataHub UI에서 이 흐름을 그래프로 시각화하여 *데이터 영향도 분석*이나 *장애 원인 추적*에 활용.
+
+----
+
+h2. 2. 무엇을 만들었나
+
+*aileron-meta-collector*는 DataHub에 데이터 리니지(lineage)를 자동으로 수집·전송하는 Python 라이브러리.
+
+MS 개발자가 *데코레이터 한 줄*만 추가하면 Athena / S3 / SQLAlchemy 쿼리의 리니지가 자동으로 DataHub에 등록.
+
+{code:language=python}
+@datahub_job_fn("orders-etl", flow="daily-pipeline")
+def run():
+    athena.execute("INSERT INTO staging.orders SELECT * FROM raw.orders")
+    # ↑ 실행만 해도 DataHub에 리니지 자동 등록
+{code}
+
+{code}
+pip install aileron-meta-collector
+{code}
+
+{tip}📦 PyPI: https://pypi.org/project/aileron-meta-collector/{tip}
+
+----
+
+h2. 3. 왜 만들었나
+
+h3. 기존 방식의 문제
+
+DataHub에 리니지를 등록하려면 아래와 같이 복잡한 SDK 코드를 직접 작성해야 했음.
+
+{code:language=python}
+# 기존 방식 — MS마다 직접 작성해야 하는 코드
+emitter = DatahubRestEmitter(gms_server="http://localhost:8080")
+emitter.emit(MetadataChangeProposalWrapper(
+    entityUrn="urn:li:dataJob:...",
+    aspect=DataJobInputOutputClass(
+        inputDatasets=[...],
+        outputDatasets=[...],
+    )
+))
+# + DataFlow, DataProcessInstance, UpstreamLineage 등 별도 emit 필요
+{code}
+
+|| 문제 || 내용 ||
+| 중복 코드 | MS마다 동일한 emit 코드 반복 작성 |
+| 등록 누락 | 수동 등록이라 빠뜨리기 쉬움 |
+| 유지보수 어려움 | DataHub SDK 변경 시 모든 MS 수정 필요 |
+
+h3. 해결책
+
+*훅(hook) 기반 자동 감지* — 쿼리 실행 시점을 자동으로 감지하여 리니지 emit
+
+{code}
+install_all_hooks() 한 번 호출 → 이후 모든 쿼리 자동 감지
+{code}
+
+----
+
+h2. 4. 개발 과정
+
+Claude Code와 함께 약 2주간 *v0.1.0 → v0.1.4* 릴리즈 진행.
+
+h3. 버전별 변경 이력
+
+|| 버전 || 주요 기능 ||
+| *v0.1.0* | SQLAlchemy 훅, boto3 Athena/S3 훅, JobContext, DataHub emit 초기 구현 |
+| *v0.1.1* | DataJob 간 리니지(upstream_jobs), 수동 lineage API, CREATE VIEW 파싱 지원, 로그 강화 |
+| *v0.1.2* | DataJob upstream 연결 버그 수정, flush_emit() 추가, 파이프라인 통합 테스트 |
+| *v0.1.3* | propagate_job 추가 (ThreadPoolExecutor 병렬 작업 lineage 캡처) |
+| *v0.1.4* | emit 성공 시 INFO 로그 추가 |
+
+----
+
+h2. 5. 핵심 아키텍처
+
+h3. 동작 흐름
+
+{code}
+① install_all_hooks()
+   └→ SQLAlchemy Engine 이벤트 훅 등록
+   └→ boto3 Athena / S3 이벤트 훅 등록
+
+② @datahub_job_fn("job-name", flow="pipeline")
+   └→ Thread-local JobContext 생성 (job_id, flow, run_id, inputs, outputs)
+
+③ Athena 쿼리 실행
+   └→ get_query_execution() 응답 시점에 hook 발동
+   └→ SQL 파싱 → input/output 테이블 추출 → URN 변환
+   └→ JobContext에 누적
+
+④ 함수 종료 시 DataHub GMS에 비동기 emit
+   └→ DataFlow / DataJob / DataProcessInstance (Run)
+   └→ Dataset UpstreamLineage (쿼리별)
+   └→ DataJobInputOutput (job 전체)
+{code}
+
+{note}✅ emit은 ThreadPoolExecutor로 비동기 처리 → MS 처리 속도에 영향 없음{note}
+
+h3. 지원하는 Athena 쿼리 타입
+
+|| 쿼리 타입 || input || output ||
+| {{INSERT INTO}} | 원본 테이블 | 대상 테이블 |
+| {{CTAS}} (CREATE TABLE AS) | 원본 테이블들 | 생성 테이블 |
+| {{CREATE VIEW}} | 참조 테이블들 | 뷰 |
+| {{CREATE OR REPLACE VIEW}} | 참조 테이블들 | 뷰 |
+| {{UNLOAD}} | 원본 테이블 | S3 경로 |
+
+----
+
+h2. 6. AI Agent 사용 후기
+
+h3. 배경 — Python 경험이 거의 없는 상태에서 시작
+
+이번 프로젝트 시작 시점에 Python 개발 경험이 거의 없었음.
+DataHub SDK, boto3, SQLAlchemy 같은 라이브러리는 물론이고
+Python 패키지 구조, PyPI 배포 방법도 처음 접하는 내용이었음.
+
+그럼에도 불구하고 Claude Code와 함께 *2주 만에 라이브러리를 완성하고 PyPI에 배포* 완료.
+
+{tip}💡 "무엇을 만들어야 하는지"를 명확히 알고 있다면, "어떻게 만드는지"는 AI와 함께 충분히 해결 가능.{tip}
+
+----
+
+h3. ✅ 잘 된 것
+
+|| 상황 || 내용 ||
+| *모르는 라이브러리 빠르게 탐색* | botocore 이벤트 훅, DataHub SDK 사용법을 대화로 파악. 공식 문서를 처음부터 읽을 필요 없음 |
+| *Python 문법 / 패턴 즉시 학습* | threading.local, contextmanager, functools.wraps 등 처음 보는 개념도 설명과 함께 코드 생성 |
+| *반복 작업 자동화* | 테스트 코드, README, CHANGELOG 자동 작성 |
+| *버그 원인 진단* | "DataJob upstream이 왜 안 보이지?" → 엔티티 부재 문제 즉시 진단 |
+| *설계 + 구현 동시에* | 요구사항을 말하면 설계 방향 제안과 코드 생성을 동시에 진행 |
+| *배포까지 자동화* | 빌드, PyPI 업로드 커맨드 실행, git 커밋까지 직접 처리 |
+
+----
+
+h3. ⚠️ 아쉬웠던 것
+
+*1. 의도를 정확히 전달해야 함*
+
+{quote}
+"with datahub_job_fn 패턴으로 README 예제를 써줘" 라고 했는데
+@datahub_job_fn 데코레이터 패턴으로 작성함.
+→ 명확하게 재요청해서 수정.
+{quote}
+
+원하는 결과를 얻으려면 배경과 의도를 함께 설명 필요.
+
+*2. 코드 검증은 반드시 직접 해야 함*
+
+그럴듯해 보이지만 실제로 실행해보면 틀린 경우 있음.
+생성된 코드를 그대로 믿지 말고 테스트 실행으로 검증 필수.
+
+*3. 긴 컨텍스트에서 이전 결정을 잊는 경우*
+
+대화가 길어지면 앞서 결정한 내용을 다시 말해야 하는 경우 발생.
+
+*4. 도메인 지식은 내가 제공해야 함*
+
+비즈니스 로직, 우리 팀의 컨벤션, 인프라 구조 등은 AI가 알 수 없음.
+이런 맥락을 충분히 제공할수록 결과물의 품질이 올라감.
+
+----
+
+h3. 💡 잘 쓰는 방법
+
+# *작게 끊어서 요청* — 큰 기능을 한 번에 말하면 방향이 틀릴 수 있음
+# *"왜"를 함께 말하기* — 배경을 알면 더 적합한 설계를 제안
+# *모르는 것을 물어보는 도구로 활용* — 공식 문서 읽는 시간을 크게 절감
+# *생성된 코드는 반드시 리뷰* — 최종 책임은 개발자에게 있음
+# *반복 작업에 아낌없이 활용* — 테스트, 문서, 커밋 메시지, 배포 등
+
+----
+
+h3. 추천 / 비추천 케이스
+
+|| ✅ 추천 || ⚠️ 주의 필요 ||
+| 새로운 라이브러리 빠르게 학습 | 비즈니스 도메인 지식이 필요한 설계 결정 |
+| 익숙하지 않은 언어로 개발 | 보안 민감한 코드 (반드시 직접 리뷰) |
+| 테스트 코드, README, CHANGELOG 작성 | 레거시 코드 대규모 리팩토링 |
+| 반복적인 boilerplate 코드 생성 | 정확한 비즈니스 요구사항 정의 |
+| 버그 원인 파악 및 디버깅 | |
+
+----
+
+h2. 7. 결론
+
+{info}
+*AI Agent는 개발자를 대체하지 않고 생산성을 높이는 도구.*
+"무엇을 만들지"는 개발자가, "어떻게 만들지"는 같이.
+{info}
+
+Python 경험이 거의 없는 상태에서 시작했지만,
+Claude Code와 함께 {{v0.1.0 → v0.1.4}} 릴리즈와 PyPI 배포까지 2주 만에 완료.
+
+*언어나 프레임워크에 대한 경험 부족이 더 이상 개발의 장벽이 되지 않음.*
+도메인 지식과 문제를 정의하는 능력이 있다면, AI와 함께 충분히 구현 가능.
+
+팀 단위로 도입 시 *코드 리뷰 프로세스와 함께 사용* 권장.
+AI가 생성한 코드도 동일한 리뷰 기준 적용 필요.
+
+----
+
+{tip}
+📦 *aileron-meta-collector*
+{{pip install aileron-meta-collector}}
+https://pypi.org/project/aileron-meta-collector/
+{tip}

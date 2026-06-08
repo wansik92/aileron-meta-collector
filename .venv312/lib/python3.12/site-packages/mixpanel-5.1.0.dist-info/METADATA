@@ -1,0 +1,36 @@
+Metadata-Version: 2.4
+Name: mixpanel
+Version: 5.1.0
+Summary: Official Mixpanel library for Python
+Author-email: "Mixpanel, Inc." <dev@mixpanel.com>
+License-Expression: Apache-2.0
+Project-URL: Homepage, https://github.com/mixpanel/mixpanel-python
+Keywords: mixpanel,analytics
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Requires-Python: >=3.9
+Description-Content-Type: text/x-rst
+License-File: LICENSE.txt
+Requires-Dist: requests<3,>=2.4.2
+Requires-Dist: httpx>=0.27.0
+Requires-Dist: pydantic>=2.0.0
+Requires-Dist: asgiref>=3.0.0
+Requires-Dist: json-logic==0.7.0a0
+Provides-Extra: test
+Requires-Dist: pytest>=8.4.1; extra == "test"
+Requires-Dist: pytest-asyncio>=0.23.0; extra == "test"
+Requires-Dist: responses>=0.25.8; extra == "test"
+Requires-Dist: respx>=0.21.0; extra == "test"
+Requires-Dist: pytest-cov; extra == "test"
+Provides-Extra: dev
+Requires-Dist: tox>=4.28.4; extra == "dev"
+Requires-Dist: build; extra == "dev"
+Requires-Dist: twine; extra == "dev"
+Requires-Dist: sphinx; extra == "dev"
+Requires-Dist: ghp-import; extra == "dev"
+Dynamic: license-file

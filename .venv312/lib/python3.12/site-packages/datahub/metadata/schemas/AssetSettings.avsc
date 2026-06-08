@@ -1,0 +1,63 @@
+{
+  "type": "record",
+  "Aspect": {
+    "name": "assetSettings"
+  },
+  "name": "AssetSettings",
+  "namespace": "com.linkedin.pegasus2avro.settings.asset",
+  "fields": [
+    {
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "AssetSummarySettings",
+          "namespace": "com.linkedin.pegasus2avro.settings.asset",
+          "fields": [
+            {
+              "Relationship": {
+                "/*/template": {
+                  "entityTypes": [
+                    "dataHubPageTemplate"
+                  ],
+                  "name": "HasSummaryTemplate"
+                }
+              },
+              "type": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "record",
+                    "name": "AssetSummarySettingsTemplate",
+                    "namespace": "com.linkedin.pegasus2avro.settings.asset",
+                    "fields": [
+                      {
+                        "java": {
+                          "class": "com.linkedin.pegasus2avro.common.urn.Urn"
+                        },
+                        "type": "string",
+                        "name": "template",
+                        "doc": "The urn of the template",
+                        "Urn": "Urn"
+                      }
+                    ],
+                    "doc": "Object containing the template and any additional info for asset summary settings"
+                  }
+                },
+                "null"
+              ],
+              "name": "templates",
+              "default": [],
+              "doc": "The list of templates applied to this asset in order. Right now we only expect one."
+            }
+          ],
+          "doc": "Information related to the asset summary for this asset"
+        }
+      ],
+      "name": "assetSummary",
+      "default": null,
+      "doc": "Information related to the asset summary for this asset"
+    }
+  ],
+  "doc": "Settings associated with this asset"
+}

@@ -1,0 +1,22 @@
+{
+  "type": "record",
+  "Aspect": {
+    "name": "dataHubFileKey",
+    "keyForEntity": "dataHubFile",
+    "entityCategory": "core",
+    "entityAspects": [
+      "dataHubFileInfo",
+      "status"
+    ]
+  },
+  "name": "DataHubFileKey",
+  "namespace": "com.linkedin.pegasus2avro.metadata.key",
+  "fields": [
+    {
+      "type": "string",
+      "name": "id",
+      "doc": "Unique id for the file."
+    }
+  ],
+  "doc": "Key for a DataHubFile"
+}
