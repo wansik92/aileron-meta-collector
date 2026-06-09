@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.18] - 2026-06-09
+
+### Added
+- `DATAHUB_EMIT_MODE` 환경변수 추가 — HTTP / Kafka emit 선택 가능
+  - `http` (기본값): 기존 REST API 방식
+  - `kafka`: Kafka 토픽(`MetadataChangeProposal_v1`)으로 emit — GMS down 시에도 메시지 보존
+  - Kafka 관련 설정: `DATAHUB_KAFKA_BOOTSTRAP`, `DATAHUB_KAFKA_SCHEMA_REGISTRY_URL`, `DATAHUB_KAFKA_MCP_TOPIC`
+  - Kafka 모드 사용 시 `pip install 'aileron-meta-collector[kafka]'` 필요
+
+---
+
 ## [0.1.17] - 2026-06-08
 
 ### Fixed

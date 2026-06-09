@@ -60,11 +60,16 @@ boto3 = [
 sqlalchemy = [
     "SQLAlchemy>=1.4.0",
 ]
+# Kafka emit 모드 사용 환경
+kafka = [
+    "confluent-kafka>=2.0.0",
+]
 # 전체 설치 (표준 datahub 기준)
 all = [
     "acryl-datahub>=0.12.0",
     "boto3>=1.26.0",
     "SQLAlchemy>=1.4.0",
+    "confluent-kafka>=2.0.0",
 ]
 dev = [
     "pytest>=7.0",

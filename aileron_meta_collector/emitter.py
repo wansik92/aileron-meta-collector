@@ -35,7 +35,11 @@ except ImportError:
     _DATAHUB_AVAILABLE = False
     DatahubRestEmitter = None  # type: ignore[assignment,misc]
 
-from .config import DATAHUB_ENV, DATAHUB_GMS_URL, DATAHUB_SILENT_FAIL, DATAHUB_CONNECT_TIMEOUT_SEC, DATAHUB_RETRY_MAX_TIMES
+from .config import (
+    DATAHUB_ENV, DATAHUB_EMIT_MODE,
+    DATAHUB_GMS_URL, DATAHUB_SILENT_FAIL, DATAHUB_CONNECT_TIMEOUT_SEC, DATAHUB_RETRY_MAX_TIMES,
+    DATAHUB_KAFKA_BOOTSTRAP, DATAHUB_KAFKA_SCHEMA_REGISTRY_URL, DATAHUB_KAFKA_MCP_TOPIC,
+)
 from .context import JobContext
 
 logger = logging.getLogger(__name__)
@@ -75,15 +79,36 @@ def _check_datahub() -> None:
         )
 
 
-def _get_emitter() -> "DatahubRestEmitter":
+def _get_emitter():
     global _emitter
     _check_datahub()
     if _emitter is None:
-        _emitter = DatahubRestEmitter(
-            gms_server=DATAHUB_GMS_URL,
-            connect_timeout_sec=DATAHUB_CONNECT_TIMEOUT_SEC,
-            retry_max_times=DATAHUB_RETRY_MAX_TIMES,
-        )
+        if DATAHUB_EMIT_MODE == "kafka":
+            try:
+                from datahub.emitter.kafka_emitter import DatahubKafkaEmitter, KafkaEmitterConfig
+                from datahub.configuration.kafka import KafkaProducerConnectionConfig
+                _emitter = DatahubKafkaEmitter(
+                    KafkaEmitterConfig(
+                        connection=KafkaProducerConnectionConfig(
+                            bootstrap=DATAHUB_KAFKA_BOOTSTRAP,
+                            schema_registry_url=DATAHUB_KAFKA_SCHEMA_REGISTRY_URL,
+                        ),
+                        topic_routes={"MetadataChangeProposal": DATAHUB_KAFKA_MCP_TOPIC},
+                    )
+                )
+                logger.info("[aileron] emit mode: kafka (bootstrap=%s)", DATAHUB_KAFKA_BOOTSTRAP)
+            except ImportError:
+                raise ImportError(
+                    "[aileron] Kafka emit 모드에는 confluent-kafka 패키지가 필요합니다. "
+                    "pip install 'aileron-meta-collector[kafka]'"
+                )
+        else:
+            _emitter = DatahubRestEmitter(
+                gms_server=DATAHUB_GMS_URL,
+                connect_timeout_sec=DATAHUB_CONNECT_TIMEOUT_SEC,
+                retry_max_times=DATAHUB_RETRY_MAX_TIMES,
+            )
+            logger.info("[aileron] emit mode: http (gms=%s)", DATAHUB_GMS_URL)
     return _emitter
 
 
