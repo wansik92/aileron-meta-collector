@@ -7,7 +7,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Callable, Generator, Optional, TypeVar
+from typing import Any, Callable, Dict, Generator, Optional, TypeVar
 
 F = TypeVar("F", bound=Callable)
 
@@ -64,6 +64,7 @@ def datahub_job(
     description: str | None = None,
     flow_description: str | None = None,
     patch: bool = False,
+    airflow_context: Optional[Dict[str, Any]] = None,
 ) -> Generator[JobContext, None, None]:
     from .config import DATAHUB_ENABLED, DATAHUB_ENV
 
@@ -108,6 +109,10 @@ def datahub_job(
         emit_run_end_async(job, DATAHUB_ENV, success=False, error_msg=str(e), patch=patch)
         raise
     finally:
+        # Airflow task inlets/outlets 자동 주입
+        if airflow_context:
+            from .airflow_inject import inject_to_airflow
+            inject_to_airflow(job, airflow_context)
         clear_job()
 
 
@@ -155,36 +160,42 @@ def datahub_job_fn(
     description: str | None = None,
     flow_description: str | None = None,
     patch: bool = False,
+    airflow_context_kwarg: Optional[str] = None,
 ) -> Callable[[F], F]:
     """
     함수 단위 lineage 수집 데코레이터.
 
     Args:
-        job_id:        DataHub DataJob 식별자
-        flow:          DataFlow 이름 (파이프라인 단위)
-        platform:      플랫폼 (기본값: pythonSdk)
-        upstream_jobs: 이 job이 의존하는 상위 DataJob ID 목록.
-                       같은 flow 내 다른 job_id를 지정하면 DataJob 간 리니지가 그려짐.
-        patch:         True이면 DataJobInputOutput을 patch MCP로 emit — 기존 데이터에 추가 (덮어쓰지 않음).
-                       False(기본값)이면 replace 방식 유지.
+        job_id:                  DataHub DataJob 식별자
+        flow:                    DataFlow 이름 (파이프라인 단위)
+        platform:                플랫폼 (기본값: pythonSdk)
+        upstream_jobs:           이 job이 의존하는 상위 DataJob ID 목록.
+        patch:                   True이면 patch MCP로 emit.
+        airflow_context_kwarg:   Airflow context가 담긴 kwargs 키 이름.
+                                 지정 시 해당 context로 task._inlets/_outlets 자동 주입.
+                                 예) airflow_context_kwarg="context" → kwargs["context"] 사용
 
     사용 예::
 
         @datahub_job_fn("step1-extract", flow="daily-etl-pipeline")
         def step1(): ...
 
-        @datahub_job_fn("step2-transform", flow="daily-etl-pipeline",
-                        upstream_jobs=["step1-extract"])
-        def step2(): ...
+        # Airflow PythonOperator에서 자동 주입
+        @datahub_job_fn("my-etl", flow="pipeline", airflow_context_kwarg="context")
+        def my_etl(**context): ...
     """
     def decorator(func: F) -> F:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
+            # airflow_context_kwarg 지정 시 해당 kwargs에서 context 추출
+            af_context = kwargs.get(airflow_context_kwarg) if airflow_context_kwarg else None
+
             with datahub_job(job_id, flow=flow, platform=platform,
                              upstream_jobs=upstream_jobs,
                              description=description,
                              flow_description=flow_description,
-                             patch=patch):
+                             patch=patch,
+                             airflow_context=af_context):
                 return func(*args, **kwargs)
         return wrapper  # type: ignore[return-value]
     return decorator
