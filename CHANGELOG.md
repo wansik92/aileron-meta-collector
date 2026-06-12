@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.21] - 2026-06-09
+
+### Changed
+- Airflow Variable 키 및 환경변수명에 `ail_` / `AIL_` 접두사 추가
+  - 예) `datahub_enabled` → `ail_datahub_enabled`, `DATAHUB_ENABLED` → `AIL_DATAHUB_ENABLED`
+
+---
+
 ## [0.1.20] - 2026-06-09
 
 ### Changed

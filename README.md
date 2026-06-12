@@ -424,13 +424,13 @@ Airflow UI → **Admin → Variables** → 다음 값 추가:
 
 | Airflow Variable Key | 기본값 | 설명 |
 |---------------------|--------|------|
-| `datahub_enabled` | `false` | `true` 시 emit 활성화 |
-| `datahub_gms_url` | `http://localhost:8080` | DataHub GMS 엔드포인트 |
-| `datahub_env` | `PROD` | DataHub 환경 |
-| `datahub_silent_fail` | `true` | emit 실패 시 예외 전파 여부 |
-| `datahub_connect_timeout_sec` | `3` | 연결 타임아웃 (초) |
-| `datahub_retry_max_times` | `0` | 최대 재시도 횟수 |
-| `datahub_cooldown_sec` | `60` | GMS 실패 후 재시도 대기 시간 (초) |
+| `ail_datahub_enabled` | `false` | `true` 시 emit 활성화 |
+| `ail_datahub_gms_url` | `http://localhost:8080` | DataHub GMS 엔드포인트 |
+| `ail_datahub_env` | `PROD` | DataHub 환경 |
+| `ail_datahub_silent_fail` | `true` | emit 실패 시 예외 전파 여부 |
+| `ail_datahub_connect_timeout_sec` | `3` | 연결 타임아웃 (초) |
+| `ail_datahub_retry_max_times` | `0` | 최대 재시도 횟수 |
+| `ail_datahub_cooldown_sec` | `60` | GMS 실패 후 재시도 대기 시간 (초) |
 
 값을 변경하면 다음 task 실행부터 즉시 반영됩니다. DAG 재배포나 환경 재기동이 필요 없습니다.
 
@@ -448,14 +448,13 @@ DATAHUB_ENABLED=true
 
 | 변수명 | 기본값 | 설명 |
 |--------|--------|------|
-| `DATAHUB_ENABLED` | `false` | `true` 시 emit 활성화 — Airflow Variable `datahub_enabled`로 override 가능 |
-| `DATAHUB_ENV` | `PROD` | DataHub 환경 (`PROD` / `DEV` / `STAGING`) |
-| `DATAHUB_SILENT_FAIL` | `true` | emit 실패 시 예외 전파 여부 (`false`로 설정 시 예외 발생) |
-| `DATAHUB_COOLDOWN_SEC` | `60` | GMS 연결 실패 후 재시도 대기 시간 (초) |
-
-| `DATAHUB_GMS_URL` | `http://localhost:8080` | DataHub GMS REST 엔드포인트 |
-| `DATAHUB_CONNECT_TIMEOUT_SEC` | `3` | 연결 타임아웃 (초) — DNS 실패 / 연결 불가 시 빠르게 포기 |
-| `DATAHUB_RETRY_MAX_TIMES` | `0` | 최대 재시도 횟수 |
+| `AIL_DATAHUB_ENABLED` | `false` | `true` 시 emit 활성화 — Airflow Variable `ail_datahub_enabled`로 override 가능 |
+| `AIL_DATAHUB_GMS_URL` | `http://localhost:8080` | DataHub GMS REST 엔드포인트 |
+| `AIL_DATAHUB_ENV` | `PROD` | DataHub 환경 (`PROD` / `DEV` / `STAGING`) |
+| `AIL_DATAHUB_SILENT_FAIL` | `true` | emit 실패 시 예외 전파 여부 (`false`로 설정 시 예외 발생) |
+| `AIL_DATAHUB_CONNECT_TIMEOUT_SEC` | `3` | 연결 타임아웃 (초) |
+| `AIL_DATAHUB_RETRY_MAX_TIMES` | `0` | 최대 재시도 횟수 |
+| `AIL_DATAHUB_COOLDOWN_SEC` | `60` | GMS 연결 실패 후 재시도 대기 시간 (초) |
 | `DATAHUB_CONNECT_TIMEOUT_SEC` | `3` | 연결 타임아웃 (초) |
 | `DATAHUB_RETRY_MAX_TIMES` | `0` | 최대 재시도 횟수 |
 

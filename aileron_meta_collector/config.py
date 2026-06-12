@@ -15,28 +15,28 @@ def _get(airflow_key: str, env_key: str, default: str) -> str:
 
 
 def is_datahub_enabled() -> bool:
-    return _get("datahub_enabled", "DATAHUB_ENABLED", "false").lower() == "true"
+    return _get("ail_datahub_enabled", "AIL_DATAHUB_ENABLED", "false").lower() == "true"
 
 
 def get_gms_url() -> str:
-    return _get("datahub_gms_url", "DATAHUB_GMS_URL", "http://localhost:8080")
+    return _get("ail_datahub_gms_url", "AIL_DATAHUB_GMS_URL", "http://localhost:8080")
 
 
 def get_env() -> str:
-    return _get("datahub_env", "DATAHUB_ENV", "PROD")
+    return _get("ail_datahub_env", "AIL_DATAHUB_ENV", "PROD")
 
 
 def is_silent_fail() -> bool:
-    return _get("datahub_silent_fail", "DATAHUB_SILENT_FAIL", "true").lower() == "true"
+    return _get("ail_datahub_silent_fail", "AIL_DATAHUB_SILENT_FAIL", "true").lower() == "true"
 
 
 def get_connect_timeout_sec() -> float:
-    return float(_get("datahub_connect_timeout_sec", "DATAHUB_CONNECT_TIMEOUT_SEC", "3"))
+    return float(_get("ail_datahub_connect_timeout_sec", "AIL_DATAHUB_CONNECT_TIMEOUT_SEC", "3"))
 
 
 def get_retry_max_times() -> int:
-    return int(_get("datahub_retry_max_times", "DATAHUB_RETRY_MAX_TIMES", "0"))
+    return int(_get("ail_datahub_retry_max_times", "AIL_DATAHUB_RETRY_MAX_TIMES", "0"))
 
 
 def get_cooldown_sec() -> float:
-    return float(_get("datahub_cooldown_sec", "DATAHUB_COOLDOWN_SEC", "60"))
+    return float(_get("ail_datahub_cooldown_sec", "AIL_DATAHUB_COOLDOWN_SEC", "60"))
