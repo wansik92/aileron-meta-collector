@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 
-from .config import DATAHUB_ENV
+from .config import get_env
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ def build_dataset_urn(
                   - DB : "database.table"  또는 "table"
                   - S3 : "bucket/prefix"   또는 "s3://bucket/prefix" (s3:// 자동 제거)
         platform: DataHub 플랫폼명. 예: "glue", "postgres", "mysql", "s3", "snowflake"
-        env:      DataHub 환경. None이면 DATAHUB_ENV 환경변수 사용.
+        env:      DataHub 환경. None이면 AIL_DATAHUB_ENV 환경변수 사용.
 
     Returns:
         예) "urn:li:dataset:(urn:li:dataPlatform:glue,sales_db.orders,PROD)"
@@ -66,7 +66,7 @@ def build_dataset_urn(
         build_dataset_urn("public.users", "postgres", env="DEV")
         # → "urn:li:dataset:(urn:li:dataPlatform:postgres,public.users,DEV)"
     """
-    _env = env or DATAHUB_ENV
+    _env = env or get_env()
     # s3:// prefix 제거
     name = table.replace("s3://", "").rstrip("/") if platform == "s3" else table
     return f"urn:li:dataset:(urn:li:dataPlatform:{platform},{name},{_env})"
@@ -90,7 +90,7 @@ def add_input(
         table:    테이블명 또는 S3 경로 (platform과 함께 사용)
         platform: DataHub 플랫폼명 (table과 함께 사용)
         urn:      직접 지정할 DataHub URN (table/platform 대신 사용)
-        env:      DataHub 환경 (None이면 DATAHUB_ENV 사용)
+        env:      DataHub 환경 (None이면 AIL_DATAHUB_ENV 사용)
 
     Raises:
         ValueError: job context가 없거나 인자가 부족한 경우
@@ -134,7 +134,7 @@ def add_output(
         table:    테이블명 또는 S3 경로 (platform과 함께 사용)
         platform: DataHub 플랫폼명 (table과 함께 사용)
         urn:      직접 지정할 DataHub URN (table/platform 대신 사용)
-        env:      DataHub 환경 (None이면 DATAHUB_ENV 사용)
+        env:      DataHub 환경 (None이면 AIL_DATAHUB_ENV 사용)
 
     Examples::
 
@@ -179,7 +179,7 @@ def emit_lineage(
         inputs:   input dataset 목록 (테이블명 또는 URN)
         outputs:  output dataset 목록 (테이블명 또는 URN)
         platform: 테이블명 방식 사용 시 DataHub 플랫폼명 (e.g. "glue", "postgres")
-        env:      DataHub 환경 (None이면 DATAHUB_ENV 사용)
+        env:      DataHub 환경 (None이면 AIL_DATAHUB_ENV 사용)
 
     Examples::
 
@@ -206,7 +206,7 @@ def emit_lineage(
     from .emitter import emit_lineage_async
     from .context import JobContext
 
-    _env = env or DATAHUB_ENV
+    _env = env or get_env()
 
     def _to_urn(item: str) -> str:
         if item.startswith("urn:li:"):

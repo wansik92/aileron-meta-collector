@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.23] - 2026-06-09
+
+### Fixed
+- `lineage.py`에서 삭제된 `DATAHUB_ENV` 상수 import 오류 수정 → `get_env()` 함수로 교체
+
+---
+
 ## [0.1.22] - 2026-06-09
 
 ### Changed
