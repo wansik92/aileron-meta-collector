@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.22] - 2026-06-09
+
+### Changed
+- GMS endpoint 기본값 변경: `http://localhost:8080` → `http://aileron.universe.com/gms`
+
+---
+
 ## [0.1.21] - 2026-06-09
 
 ### Changed

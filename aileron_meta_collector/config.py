@@ -19,7 +19,7 @@ def is_datahub_enabled() -> bool:
 
 
 def get_gms_url() -> str:
-    return _get("ail_datahub_gms_url", "AIL_DATAHUB_GMS_URL", "http://localhost:8080")
+    return _get("ail_datahub_gms_url", "AIL_DATAHUB_GMS_URL", "http://aileron.universe.com/gms")
 
 
 def get_env() -> str:
