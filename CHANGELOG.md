@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.20] - 2026-06-09
+
+### Changed
+- 모든 설정값을 Airflow Variable → 환경변수 순으로 읽도록 변경
+  - `datahub_gms_url`, `datahub_env`, `datahub_silent_fail`, `datahub_connect_timeout_sec`, `datahub_retry_max_times`, `datahub_cooldown_sec`
+  - MWAA 환경에서 Airflow UI(Admin → Variables)로 재기동 없이 즉시 변경 가능
+
+---
+
+## [0.1.19] - 2026-06-09
+
+### Changed
+- `DATAHUB_ENABLED` 기본값 `true` → `false`
+- 런타임 환경변수 변경 즉시 반영 — 모듈 import 시 1회 읽던 방식에서 매 호출 시 읽는 방식으로 변경
+
+---
+
 ## [0.1.18] - 2026-06-09
 
 ### Added

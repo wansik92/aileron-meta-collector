@@ -407,13 +407,40 @@ pip install "aileron-meta-collector[dev]"
 
 ---
 
-## DataHub 연동 비활성화
+## DataHub 연동 활성화/비활성화
+
+기본값은 **`false`** (비활성화)입니다. 명시적으로 활성화해야 lineage 수집이 시작됩니다.
+
+### 활성화 우선순위
+
+| 우선순위 | 방법 | 비고 |
+|---------|------|------|
+| 1 | Airflow Variable `datahub_enabled` | MWAA 환경 — UI에서 즉시 변경 가능 |
+| 2 | 환경변수 `DATAHUB_ENABLED` | 일반 Python 환경 |
+
+### MWAA 환경 (Airflow Variable — 재기동 없이 즉시 적용)
+
+Airflow UI → **Admin → Variables** → 다음 값 추가:
+
+| Airflow Variable Key | 기본값 | 설명 |
+|---------------------|--------|------|
+| `datahub_enabled` | `false` | `true` 시 emit 활성화 |
+| `datahub_gms_url` | `http://localhost:8080` | DataHub GMS 엔드포인트 |
+| `datahub_env` | `PROD` | DataHub 환경 |
+| `datahub_silent_fail` | `true` | emit 실패 시 예외 전파 여부 |
+| `datahub_connect_timeout_sec` | `3` | 연결 타임아웃 (초) |
+| `datahub_retry_max_times` | `0` | 최대 재시도 횟수 |
+| `datahub_cooldown_sec` | `60` | GMS 실패 후 재시도 대기 시간 (초) |
+
+값을 변경하면 다음 task 실행부터 즉시 반영됩니다. DAG 재배포나 환경 재기동이 필요 없습니다.
+
+### 일반 Python 환경 (환경변수)
 
 ```bash
-DATAHUB_ENABLED=false
+DATAHUB_ENABLED=true
 ```
 
-`@datahub_job_fn` / `datahub_job` 데코레이터가 붙어있어도 emit 코드가 전혀 실행되지 않고 비즈니스 로직만 수행됩니다.
+`@datahub_job_fn` / `datahub_job` 데코레이터가 붙어있어도 비활성화 상태에서는 emit 코드가 전혀 실행되지 않고 비즈니스 로직만 수행됩니다.
 
 ---
 
@@ -421,22 +448,14 @@ DATAHUB_ENABLED=false
 
 | 변수명 | 기본값 | 설명 |
 |--------|--------|------|
-| `DATAHUB_ENABLED` | `true` | `false` 시 모든 emit skip — 비즈니스 로직에 영향 없음 |
+| `DATAHUB_ENABLED` | `false` | `true` 시 emit 활성화 — Airflow Variable `datahub_enabled`로 override 가능 |
 | `DATAHUB_ENV` | `PROD` | DataHub 환경 (`PROD` / `DEV` / `STAGING`) |
 | `DATAHUB_SILENT_FAIL` | `true` | emit 실패 시 예외 전파 여부 (`false`로 설정 시 예외 발생) |
 | `DATAHUB_COOLDOWN_SEC` | `60` | GMS 연결 실패 후 재시도 대기 시간 (초) |
 
-| 변수명 | 기본값 | 설명 |
-|--------|--------|------|
 | `DATAHUB_GMS_URL` | `http://localhost:8080` | DataHub GMS REST 엔드포인트 |
 | `DATAHUB_CONNECT_TIMEOUT_SEC` | `3` | 연결 타임아웃 (초) — DNS 실패 / 연결 불가 시 빠르게 포기 |
 | `DATAHUB_RETRY_MAX_TIMES` | `0` | 최대 재시도 횟수 |
-
-### Kafka 모드 (`DATAHUB_EMIT_MODE=kafka`)
-
-| 변수명 | 기본값 | 설명 |
-|--------|--------|------|
-| `DATAHUB_GMS_URL` | `http://localhost:8080` | DataHub GMS REST 엔드포인트 |
 | `DATAHUB_CONNECT_TIMEOUT_SEC` | `3` | 연결 타임아웃 (초) |
 | `DATAHUB_RETRY_MAX_TIMES` | `0` | 최대 재시도 횟수 |
 

@@ -36,8 +36,7 @@ except ImportError:
     DatahubRestEmitter = None  # type: ignore[assignment,misc]
 
 from .config import (
-    DATAHUB_ENV,
-    DATAHUB_GMS_URL, DATAHUB_SILENT_FAIL, DATAHUB_CONNECT_TIMEOUT_SEC, DATAHUB_RETRY_MAX_TIMES,
+    get_env, get_gms_url, is_silent_fail, get_connect_timeout_sec, get_retry_max_times, get_cooldown_sec,
 )
 from .context import JobContext
 
@@ -55,7 +54,6 @@ _emitter: "DatahubRestEmitter | None" = None
 _datahub_reachable: bool = True  # 연결 가능 여부 — 실패 시 False, 성공 시 복구
 _last_fail_time: float = 0.0     # 마지막 실패 시각 (쿨다운 계산용)
 
-_COOLDOWN_SEC: float = float(os.getenv("DATAHUB_COOLDOWN_SEC", "60"))  # 재시도 간격 (기본 60초)
 
 
 def flush_emit(timeout: float = 30.0) -> None:
@@ -83,9 +81,9 @@ def _get_emitter() -> "DatahubRestEmitter":
     _check_datahub()
     if _emitter is None:
         _emitter = DatahubRestEmitter(
-            gms_server=DATAHUB_GMS_URL,
-            connect_timeout_sec=DATAHUB_CONNECT_TIMEOUT_SEC,
-            retry_max_times=DATAHUB_RETRY_MAX_TIMES,
+            gms_server=get_gms_url(),
+            connect_timeout_sec=get_connect_timeout_sec(),
+            retry_max_times=get_retry_max_times(),
         )
     return _emitter
 
@@ -100,7 +98,7 @@ def _should_skip() -> bool:
     단, 마지막 실패로부터 COOLDOWN_SEC 이상 지났으면 재시도를 허용합니다.
     """
     if not _datahub_reachable:
-        if time.time() - _last_fail_time > _COOLDOWN_SEC:
+        if time.time() - _last_fail_time > get_cooldown_sec():
             logger.info("[aileron] DataHub 쿨다운 종료 — 연결 재시도")
             return False  # 쿨다운 지남 → 한 번 시도
         logger.debug("[aileron] DataHub 연결 불가 상태 — emit skip")
@@ -119,8 +117,8 @@ def _on_failure(e: Exception) -> None:
     global _datahub_reachable, _last_fail_time
     _datahub_reachable = False
     _last_fail_time = time.time()
-    if DATAHUB_SILENT_FAIL:
-        logger.warning("[aileron] DataHub emit 실패 — %s초 후 재시도: %s", int(_COOLDOWN_SEC), e)
+    if is_silent_fail():
+        logger.warning("[aileron] DataHub emit 실패 — %s초 후 재시도: %s", int(get_cooldown_sec()), e)
     else:
         raise e
 

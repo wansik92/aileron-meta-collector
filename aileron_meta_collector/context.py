@@ -66,10 +66,10 @@ def datahub_job(
     patch: bool = False,
     airflow_context: Optional[Dict[str, Any]] = None,
 ) -> Generator[JobContext, None, None]:
-    from .config import DATAHUB_ENABLED, DATAHUB_ENV
+    from .config import is_datahub_enabled, get_env
 
-    # DATAHUB_ENABLED=false 이면 emit 없이 그냥 통과 — 비즈니스 로직에 영향 없음
-    if not DATAHUB_ENABLED:
+    # DATAHUB_ENABLED=false(기본값) 이면 emit 없이 그냥 통과 — 비즈니스 로직에 영향 없음
+    if not is_datahub_enabled():
         yield JobContext(job_id, flow, platform, upstream_jobs or [], description or "", flow_description or "")
         return
 
@@ -86,9 +86,9 @@ def datahub_job(
 
     logger.info("[aileron] job started  | flow=%s  job=%s  run=%s", flow, job_id, job.run_id[:8])
 
-    emit_dataflow_async(job, DATAHUB_ENV)
-    emit_datajob_async(job, DATAHUB_ENV)
-    emit_run_start_async(job, DATAHUB_ENV)
+    emit_dataflow_async(job, get_env())
+    emit_datajob_async(job, get_env())
+    emit_run_start_async(job, get_env())
 
     try:
         yield job
@@ -99,14 +99,14 @@ def datahub_job(
         )
         logger.debug("[aileron] inputs  : %s", job.inputs)
         logger.debug("[aileron] outputs : %s", job.outputs)
-        emit_run_end_async(job, DATAHUB_ENV, success=True, patch=patch)
+        emit_run_end_async(job, get_env(), success=True, patch=patch)
     except Exception as e:
         elapsed = int(time.time() * 1000) - job.start_time_ms
         logger.warning(
             "[aileron] job failed   | flow=%s  job=%s  run=%s  elapsed=%dms  error=%s",
             flow, job_id, job.run_id[:8], elapsed, e,
         )
-        emit_run_end_async(job, DATAHUB_ENV, success=False, error_msg=str(e), patch=patch)
+        emit_run_end_async(job, get_env(), success=False, error_msg=str(e), patch=patch)
         raise
     finally:
         # Airflow task inlets/outlets 자동 주입
