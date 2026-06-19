@@ -42,7 +42,7 @@ def _s3_urn(bucket: str, key: str, env: str) -> str:
 
 def _athena_table_urn(table: str, catalog: str, database: str, env: str) -> str:
     """
-    Athena 테이블을 Glue Data Catalog URN으로 변환.
+    Athena 테이블 URN으로 변환.
     - table              → database.table
     - database.table     → 그대로 사용
     - catalog.db.table   → catalog 제거 후 database.table
@@ -58,7 +58,7 @@ def _athena_table_urn(table: str, catalog: str, database: str, env: str) -> str:
         # catalog.database.table → database.table
         dataset = ".".join(parts[1:])
     dataset = dataset.strip()
-    return f"urn:li:dataset:(urn:li:dataPlatform:glue,{dataset},{env})"
+    return f"urn:li:dataset:(urn:li:dataPlatform:athena,{dataset},{env})"
 
 
 def _resolve_athena_urns(

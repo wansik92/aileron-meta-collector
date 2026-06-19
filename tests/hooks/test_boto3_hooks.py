@@ -32,7 +32,7 @@ class TestAthenaTableUrn:
     def test_table_only(self):
         urn = _athena_table_urn("orders", "AwsDataCatalog", "sales_db", "PROD")
         assert "sales_db.orders" in urn
-        assert "glue" in urn
+        assert "athena" in urn
 
     def test_database_dot_table(self):
         urn = _athena_table_urn("sales_db.orders", "AwsDataCatalog", "default", "PROD")
@@ -58,7 +58,7 @@ class TestResolveAthenaUrns:
             env="PROD",
         )
         assert len(input_urns) == 2
-        assert all("glue" in u for u in input_urns)
+        assert all("athena" in u for u in input_urns)
         assert all("sales_db" in u for u in input_urns)
         assert output_urns == []
 
@@ -74,7 +74,7 @@ class TestResolveAthenaUrns:
         assert "s3" in output_urns[0]
         assert "my-bucket/output/orders" in output_urns[0]
 
-    def test_ctas_output_becomes_glue_urn(self):
+    def test_ctas_output_becomes_athena_urn(self):
         _, output_urns = _resolve_athena_urns(
             inputs_raw=[],
             outputs_raw=["order_summary"],
@@ -83,7 +83,7 @@ class TestResolveAthenaUrns:
             env="PROD",
         )
         assert len(output_urns) == 1
-        assert "glue" in output_urns[0]
+        assert "athena" in output_urns[0]
         assert "order_summary" in output_urns[0]
 
 
@@ -109,7 +109,7 @@ class TestCreateViewUrns:
         )
         assert any("sales_db.order_view" in u for u in output_urns)
         assert any("sales_db.orders" in u for u in input_urns)
-        assert all("glue" in u for u in input_urns + output_urns)
+        assert all("athena" in u for u in input_urns + output_urns)
 
     def test_create_or_replace_view_lineage_urns(self):
         from aileron_meta_collector.parsers.sql_parser import extract_tables
