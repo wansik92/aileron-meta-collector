@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.25] - 2026-06-09
+
+### Changed
+- Athena 쿼리 lineage URN 플랫폼 `athena` → `glue` 로 변경
+- `install_sqlalchemy_hooks`, `install_boto3_hooks` env 파라미터 기본값 `"PROD"` → `None` — `get_env()` 동적 읽기로 변경
+
+---
+
+## [0.1.24] - 2026-06-09
+
+### Changed
+- `install_all_hooks`, `install_sqlalchemy_hooks`, `install_boto3_hooks` env 파라미터 기본값 `None`으로 변경 — Airflow Variable / 환경변수에서 동적으로 읽도록 수정
+
+---
+
 ## [0.1.23] - 2026-06-09
 
 ### Fixed

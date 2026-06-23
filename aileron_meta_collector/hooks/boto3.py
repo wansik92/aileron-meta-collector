@@ -58,7 +58,7 @@ def _athena_table_urn(table: str, catalog: str, database: str, env: str) -> str:
         # catalog.database.table → database.table
         dataset = ".".join(parts[1:])
     dataset = dataset.strip()
-    return f"urn:li:dataset:(urn:li:dataPlatform:athena,{dataset},{env})"
+    return f"urn:li:dataset:(urn:li:dataPlatform:glue,{dataset},{env})"
 
 
 def _resolve_athena_urns(
