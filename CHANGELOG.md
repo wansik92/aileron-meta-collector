@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.26] - 2026-10-14
+
+### Changed
+- `inject_to_airflow`에서 `datahub_airflow_plugin.entities.Urn` 의존성 제거
+  - `acryl-datahub-airflow-plugin` / `apache-airflow-providers-datahub` 설치 불필요
+  - `task._inlets` / `task._outlets`에 plain string URN 직접 주입
+
+---
+
 ## [0.1.25] - 2026-06-09
 
 ### Changed

@@ -39,28 +39,17 @@ def inject_to_airflow(job: "JobContext", airflow_context: Dict[str, Any]) -> Non
         return
 
     try:
-        from datahub_airflow_plugin.entities import Urn
-
-        input_urns  = [Urn(u) for u in job.inputs]
-        output_urns = [Urn(u) for u in job.outputs]
-
-        # DataHub Airflow plugin은 _inlets/_outlets(private)를 먼저 읽음
         if hasattr(task, "_inlets"):
-            task._inlets.extend(input_urns)
-            task._outlets.extend(output_urns)
+            task._inlets.extend(job.inputs)
+            task._outlets.extend(job.outputs)
         else:
-            task.inlets.extend(input_urns)
-            task.outlets.extend(output_urns)
+            task.inlets.extend(job.inputs)
+            task.outlets.extend(job.outputs)
 
         logger.info(
             "[aileron] Airflow task lineage 주입 완료 | task=%s  inputs=%d  outputs=%d",
-            getattr(task, "task_id", "?"), len(input_urns), len(output_urns),
+            getattr(task, "task_id", "?"), len(job.inputs), len(job.outputs),
         )
 
-    except ImportError:
-        logger.warning(
-            "[aileron] datahub_airflow_plugin 미설치 — Airflow lineage 주입 skip. "
-            "pip install 'apache-airflow-providers-datahub'"
-        )
     except Exception as e:
         logger.warning("[aileron] Airflow lineage 주입 실패 (서비스 영향 없음): %s", e)
