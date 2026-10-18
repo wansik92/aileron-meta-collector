@@ -1,106 +1,91 @@
 from __future__ import annotations
 
 import atexit
+import json
 import logging
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-# datahub는 optional dependency — 미설치 시 emit 함수에서 명확한 에러 발생
 try:
-    from datahub.emitter.mcp import MetadataChangeProposalWrapper
-    from datahub.emitter.rest_emitter import DatahubRestEmitter
-    from datahub.specific.datajob import DataJobPatchBuilder
-    from datahub.metadata.schema_classes import (
-        AuditStampClass,
-        DataFlowInfoClass,
-        DataJobInfoClass,
-        DataJobInputOutputClass,
-        DataProcessInstanceInputClass,
-        DataProcessInstanceOutputClass,
-        DataProcessInstancePropertiesClass,
-        DataProcessInstanceRelationshipsClass,
-        DataProcessInstanceRunEventClass,
-        DataProcessInstanceRunResultClass,
-        DataProcessRunStatusClass,
-        DataProcessTypeClass,
-        DatasetLineageTypeClass,
-        RunResultTypeClass,
-        UpstreamClass,
-        UpstreamLineageClass,
-    )
-    from datahub.metadata.schema_classes import DatasetPropertiesClass
-    _DATAHUB_AVAILABLE = True
+    import requests as _requests
+    _REQUESTS_AVAILABLE = True
 except ImportError:
-    _DATAHUB_AVAILABLE = False
-    DatahubRestEmitter = None  # type: ignore[assignment,misc]
+    _REQUESTS_AVAILABLE = False
 
 from .config import (
     get_env, get_gms_url, is_silent_fail, get_connect_timeout_sec, get_retry_max_times, get_cooldown_sec,
 )
 from .context import JobContext
+from .datahub_schema import (
+    ET_DATASET, ET_DATA_FLOW, ET_DATA_JOB, ET_DATA_PROCESS,
+    AS_DATASET_PROPS, AS_UPSTREAM_LINEAGE, AS_FLOW_INFO, AS_JOB_INFO, AS_JOB_IO,
+    AS_RUN_PROPS, AS_RUN_RELS, AS_RUN_EVENT, AS_RUN_INPUT, AS_RUN_OUTPUT,
+    CT_UPSERT, CT_PATCH,
+)
 
 logger = logging.getLogger(__name__)
 
 _EMIT_MAX_WORKERS = 2
 _executor = ThreadPoolExecutor(max_workers=_EMIT_MAX_WORKERS, thread_name_prefix="aileron-emit")
 
-# 프로세스 종료 시 emit 스레드풀 정리
-# wait=True: 실행 중인 emit 완료까지 대기 (GMS 살아있으면 emit 보장)
-# cancel_futures=False: 큐에 쌓인 작업도 실행
-# GMS down 시엔 _datahub_reachable=False로 skip되므로 최대 3초(connect_timeout) 내 종료
 atexit.register(lambda: _executor.shutdown(wait=True, cancel_futures=False))
-_emitter: "DatahubRestEmitter | None" = None
-_datahub_reachable: bool = True  # 연결 가능 여부 — 실패 시 False, 성공 시 복구
-_last_fail_time: float = 0.0     # 마지막 실패 시각 (쿨다운 계산용)
 
+_session: "_requests.Session | None" = None
+_datahub_reachable: bool = True
+_last_fail_time: float = 0.0
 
 
 def flush_emit(timeout: float = 30.0) -> None:
-    """모든 비동기 emit 작업이 완료될 때까지 블로킹합니다.
-
-    max_workers 개수만큼 sentinel future를 제출하고 완료를 기다립니다.
-    이렇게 하면 큐에 앞서 제출된 모든 작업이 완료된 뒤 sentinel이 실행됩니다.
-    """
+    """모든 비동기 emit 작업이 완료될 때까지 블로킹합니다."""
     futs = [_executor.submit(lambda: None) for _ in range(_EMIT_MAX_WORKERS)]
     for f in futs:
         f.result(timeout=timeout)
 
 
-def _check_datahub() -> None:
-    if not _DATAHUB_AVAILABLE:
+def _get_session() -> "_requests.Session":
+    global _session
+    if not _REQUESTS_AVAILABLE:
         raise ImportError(
-            "[aileron] datahub 패키지가 설치되지 않았습니다. "
-            "pip install acryl-datahub 또는 "
-            "pip install 'aileron-meta-collector[datahub]'"
+            "[aileron] requests 패키지가 설치되지 않았습니다. pip install requests"
         )
-
-
-def _get_emitter() -> "DatahubRestEmitter":
-    global _emitter
-    _check_datahub()
-    if _emitter is None:
-        _emitter = DatahubRestEmitter(
-            gms_server=get_gms_url(),
-            connect_timeout_sec=get_connect_timeout_sec(),
-            retry_max_times=get_retry_max_times(),
+    if _session is None:
+        from urllib3.util.retry import Retry
+        from requests.adapters import HTTPAdapter
+        retry = Retry(
+            total=get_retry_max_times(),
+            backoff_factor=0.3,
+            status_forcelist=[500, 502, 503, 504],
+            allowed_methods=["POST"],
         )
-    return _emitter
+        _session = _requests.Session()
+        _session.headers.update({"Content-Type": "application/json"})
+        _session.mount("http://", HTTPAdapter(max_retries=retry))
+        _session.mount("https://", HTTPAdapter(max_retries=retry))
+    return _session
 
 
-def _safe_emit(emitter, mcps: list) -> None:
-    for mcp in mcps:
-        emitter.emit(mcp)
+def _ingest(entity_urn: str, entity_type: str, aspect_name: str, aspect_value: dict | list, change_type: str = CT_UPSERT) -> None:
+    session = _get_session()
+    proposal = {
+        "entityType": entity_type,
+        "entityUrn": entity_urn,
+        "aspectName": aspect_name,
+        "changeType": change_type,
+        "aspect": {
+            "contentType": "application/json",
+            "value": json.dumps(aspect_value),
+        },
+    }
+    url = f"{get_gms_url()}/aspects?action=ingestProposal"
+    resp = session.post(url, json={"proposal": proposal}, timeout=(get_connect_timeout_sec(), 30))
+    resp.raise_for_status()
 
 
 def _should_skip() -> bool:
-    """DataHub 연결 불가 상태면 emit을 즉시 skip합니다.
-    단, 마지막 실패로부터 COOLDOWN_SEC 이상 지났으면 재시도를 허용합니다.
-    """
     if not _datahub_reachable:
         if time.time() - _last_fail_time > get_cooldown_sec():
             logger.info("[aileron] DataHub 쿨다운 종료 — 연결 재시도")
-            return False  # 쿨다운 지남 → 한 번 시도
+            return False
         logger.debug("[aileron] DataHub 연결 불가 상태 — emit skip")
         return True
     return False
@@ -132,9 +117,6 @@ def _job_urn(job: JobContext, env: str) -> str:
 
 
 def _job_urn_by_id(job_id: str, flow: str, platform: str, env: str) -> str:
-    """job_id 또는 full URN 으로 DataJob URN 반환 (upstream_jobs 용)
-    full URN(urn:li:...) 이면 그대로 사용 — cross-platform upstream 참조 가능.
-    """
     if job_id.startswith("urn:li:"):
         return job_id
     flow_urn = f"urn:li:dataFlow:({platform},{flow},{env})"
@@ -157,28 +139,20 @@ def _emit_lineage(input_urns: list[str], output_urns: list[str]) -> None:
     if _should_skip():
         return
     try:
-        _check_datahub()
-        emitter = _get_emitter()
-        audit = AuditStampClass(time=int(time.time() * 1000), actor="urn:li:corpuser:datahub")
+        audit = {"time": int(time.time() * 1000), "actor": "urn:li:corpuser:datahub"}
 
         for input_urn in input_urns:
-            emitter.emit(MetadataChangeProposalWrapper(
-                entityUrn=input_urn,
-                aspect=DatasetPropertiesClass(),
-            ))
+            _ingest(input_urn, ET_DATASET, AS_DATASET_PROPS, {})
             logger.debug("input dataset stub emitted: %s", input_urn)
 
         for output_urn in output_urns:
             upstreams = [
-                UpstreamClass(dataset=inp, type=DatasetLineageTypeClass.TRANSFORMED, auditStamp=audit)
+                {"dataset": inp, "type": "TRANSFORMED", "auditStamp": audit}
                 for inp in input_urns
             ]
             if not upstreams:
                 continue
-            emitter.emit(MetadataChangeProposalWrapper(
-                entityUrn=output_urn,
-                aspect=UpstreamLineageClass(upstreams=upstreams),
-            ))
+            _ingest(output_urn, ET_DATASET, AS_UPSTREAM_LINEAGE, {"upstreams": upstreams})
             logger.info("[aileron] emit ok | lineage  %s → %s", input_urns, output_urn)
         _on_success()
     except Exception as e:
@@ -197,12 +171,7 @@ def _emit_dataset_description(urn: str, description: str) -> None:
     if _should_skip():
         return
     try:
-        _check_datahub()
-        emitter = _get_emitter()
-        emitter.emit(MetadataChangeProposalWrapper(
-            entityUrn=urn,
-            aspect=DatasetPropertiesClass(description=description),
-        ))
+        _ingest(urn, ET_DATASET, AS_DATASET_PROPS, {"description": description})
         _on_success()
         logger.debug("Dataset description emitted: %s", urn)
     except Exception as e:
@@ -219,15 +188,10 @@ def _emit_dataflow(job: JobContext, env: str) -> None:
     if _should_skip():
         return
     try:
-        _check_datahub()
-        emitter = _get_emitter()
-        emitter.emit(MetadataChangeProposalWrapper(
-            entityUrn=_flow_urn(job, env),
-            aspect=DataFlowInfoClass(
-                name=job.flow,
-                description=job.flow_description,
-            ),
-        ))
+        aspect: dict = {"name": job.flow}
+        if job.flow_description:
+            aspect["description"] = job.flow_description
+        _ingest(_flow_urn(job, env), ET_DATA_FLOW, AS_FLOW_INFO, aspect)
         _on_success()
         logger.info("[aileron] emit ok | dataflow  flow=%s", job.flow)
     except Exception as e:
@@ -244,17 +208,14 @@ def _emit_datajob(job: JobContext, env: str) -> None:
     if _should_skip():
         return
     try:
-        _check_datahub()
-        emitter = _get_emitter()
-        emitter.emit(MetadataChangeProposalWrapper(
-            entityUrn=_job_urn(job, env),
-            aspect=DataJobInfoClass(
-                name=job.job_id,
-                flowUrn=_flow_urn(job, env),
-                type="PYTHON",
-                description=job.description,
-            ),
-        ))
+        aspect: dict = {
+            "name": job.job_id,
+            "flowUrn": _flow_urn(job, env),
+            "type": "PYTHON",
+        }
+        if job.description:
+            aspect["description"] = job.description
+        _ingest(_job_urn(job, env), ET_DATA_JOB, AS_JOB_INFO, aspect)
         _on_success()
         logger.info("[aileron] emit ok | datajob   flow=%s  job=%s", job.flow, job.job_id)
     except Exception as e:
@@ -271,36 +232,23 @@ def _emit_run_start(job: JobContext, env: str) -> None:
     if _should_skip():
         return
     try:
-        _check_datahub()
-        emitter = _get_emitter()
         instance_urn = _instance_urn(job)
-        audit = AuditStampClass(time=job.start_time_ms, actor="urn:li:corpuser:datahub")
+        audit = {"time": job.start_time_ms, "actor": "urn:li:corpuser:datahub"}
 
-        _safe_emit(emitter, [
-            MetadataChangeProposalWrapper(
-                entityUrn=instance_urn,
-                aspect=DataProcessInstancePropertiesClass(
-                    name=f"{job.job_id}#{job.run_id[:8]}",
-                    created=audit,
-                    type=DataProcessTypeClass.BATCH_AD_HOC,
-                ),
-            ),
-            MetadataChangeProposalWrapper(
-                entityUrn=instance_urn,
-                aspect=DataProcessInstanceRelationshipsClass(
-                    upstreamInstances=[],
-                    parentTemplate=_job_urn(job, env),
-                ),
-            ),
-            MetadataChangeProposalWrapper(
-                entityUrn=instance_urn,
-                aspect=DataProcessInstanceRunEventClass(
-                    status=DataProcessRunStatusClass.STARTED,
-                    timestampMillis=job.start_time_ms,
-                    attempt=1,
-                ),
-            ),
-        ])
+        _ingest(instance_urn, ET_DATA_PROCESS, AS_RUN_PROPS, {
+            "name": f"{job.job_id}#{job.run_id[:8]}",
+            "created": audit,
+            "type": "BATCH_AD_HOC",
+        })
+        _ingest(instance_urn, ET_DATA_PROCESS, AS_RUN_RELS, {
+            "upstreamInstances": [],
+            "parentTemplate": _job_urn(job, env),
+        })
+        _ingest(instance_urn, ET_DATA_PROCESS, AS_RUN_EVENT, {
+            "status": "STARTED",
+            "timestampMillis": job.start_time_ms,
+            "attempt": 1,
+        })
         _on_success()
         logger.info("[aileron] emit ok | run_start  flow=%s  job=%s  run=%s", job.flow, job.job_id, job.run_id[:8])
     except Exception as e:
@@ -319,40 +267,26 @@ def _emit_run_end(
     if _should_skip():
         return
     try:
-        _check_datahub()
-        emitter = _get_emitter()
         instance_urn = _instance_urn(job)
         job_urn = _job_urn(job, env)
         end_time_ms = int(time.time() * 1000)
+        result_type = "SUCCESS" if success else "FAILURE"
 
-        result_type = RunResultTypeClass.SUCCESS if success else RunResultTypeClass.FAILURE
-
-        mcps: list = [
-            MetadataChangeProposalWrapper(
-                entityUrn=instance_urn,
-                aspect=DataProcessInstanceRunEventClass(
-                    status=DataProcessRunStatusClass.COMPLETE,
-                    timestampMillis=end_time_ms,
-                    attempt=1,
-                    durationMillis=end_time_ms - job.start_time_ms,
-                    result=DataProcessInstanceRunResultClass(
-                        type=result_type,
-                        nativeResultType=result_type,
-                    ),
-                ),
-            ),
-        ]
+        _ingest(instance_urn, ET_DATA_PROCESS, AS_RUN_EVENT, {
+            "status": "COMPLETE",
+            "timestampMillis": end_time_ms,
+            "attempt": 1,
+            "durationMillis": end_time_ms - job.start_time_ms,
+            "result": {
+                "type": result_type,
+                "nativeResultType": result_type,
+            },
+        })
 
         if job.inputs:
-            mcps.append(MetadataChangeProposalWrapper(
-                entityUrn=instance_urn,
-                aspect=DataProcessInstanceInputClass(inputs=job.inputs),
-            ))
+            _ingest(instance_urn, ET_DATA_PROCESS, AS_RUN_INPUT, {"inputs": job.inputs})
         if job.outputs:
-            mcps.append(MetadataChangeProposalWrapper(
-                entityUrn=instance_urn,
-                aspect=DataProcessInstanceOutputClass(outputs=job.outputs),
-            ))
+            _ingest(instance_urn, ET_DATA_PROCESS, AS_RUN_OUTPUT, {"outputs": job.outputs})
 
         upstream_job_urns = [
             _job_urn_by_id(upstream_id, job.flow, job.platform, env)
@@ -361,25 +295,21 @@ def _emit_run_end(
 
         if job.inputs or job.outputs or upstream_job_urns:
             if patch:
-                patch_builder = DataJobPatchBuilder(job_urn)
+                patch_ops = []
                 for urn in job.inputs:
-                    patch_builder.add_input_dataset(urn)
+                    patch_ops.append({"op": "add", "path": f"/inputDatasets/{urn}", "value": {"urn": urn}})
                 for urn in job.outputs:
-                    patch_builder.add_output_dataset(urn)
+                    patch_ops.append({"op": "add", "path": f"/outputDatasets/{urn}", "value": {"urn": urn}})
                 for urn in upstream_job_urns:
-                    patch_builder.add_input_datajob(urn)
-                mcps.extend(patch_builder.build())
+                    patch_ops.append({"op": "add", "path": f"/inputDatajobs/{urn}", "value": {"urn": urn}})
+                _ingest(job_urn, ET_DATA_JOB, AS_JOB_IO, patch_ops, change_type=CT_PATCH)
             else:
-                mcps.append(MetadataChangeProposalWrapper(
-                    entityUrn=job_urn,
-                    aspect=DataJobInputOutputClass(
-                        inputDatasets=job.inputs,
-                        outputDatasets=job.outputs,
-                        inputDatajobs=upstream_job_urns,
-                    ),
-                ))
+                _ingest(job_urn, ET_DATA_JOB, AS_JOB_IO, {
+                    "inputDatasets": job.inputs,
+                    "outputDatasets": job.outputs,
+                    "inputDatajobs": upstream_job_urns,
+                })
 
-        _safe_emit(emitter, mcps)
         _on_success()
         logger.info("[aileron] emit ok | run_end    flow=%s  job=%s  run=%s  result=%s", job.flow, job.job_id, job.run_id[:8], result_type)
     except Exception as e:

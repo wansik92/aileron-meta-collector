@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.27] - 2026-10-19
+
+### Changed
+- `acryl-datahub` 의존성 완전 제거 — DataHub 버전과 무관하게 동작
+  - `DatahubRestEmitter` → `requests.Session` (GMS REST API 직접 호출)
+  - SDK 스키마 클래스 → JSON dict 직접 구성
+  - retry 정책: `urllib3.Retry` + `HTTPAdapter` 적용
+  - connect/read timeout 분리: `(connect_timeout, 30s)`
+- `datahub_schema.py` 추가 — DataHub 엔티티 타입 / Aspect 이름 / 변경 타입 상수 관리
+- `requests>=2.20.0` core dependency 추가
+- optional dependency에서 `acryl-datahub`, `acryl-datahub-hcc-patched` 제거
+
+---
+
 ## [0.1.26] - 2026-10-14
 
 ### Changed
