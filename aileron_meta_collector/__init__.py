@@ -1,5 +1,6 @@
 from .hooks.sqlalchemy import install_sqlalchemy_hooks
 from .hooks.boto3 import install_boto3_hooks
+from .hooks.s3fs import install_s3fs_hooks
 from .context import set_job, clear_job, datahub_job, datahub_job_fn, propagate_job
 from .lineage import add_input, add_output, emit_lineage, build_dataset_urn
 from .airflow_inject import inject_to_airflow
@@ -8,6 +9,7 @@ from .airflow_inject import inject_to_airflow
 def install_all_hooks(env: str = "PROD") -> None:
     install_sqlalchemy_hooks(env=env)
     install_boto3_hooks(env=env)
+    install_s3fs_hooks(env=env)
 
 
 __all__ = [
@@ -15,6 +17,7 @@ __all__ = [
     "install_all_hooks",
     "install_sqlalchemy_hooks",
     "install_boto3_hooks",
+    "install_s3fs_hooks",
     # job context
     "set_job",
     "clear_job",

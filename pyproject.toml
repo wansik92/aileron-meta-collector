@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aileron-meta-collector"
-version = "0.1.27"
+version = "0.1.28"
 description = "Automatic DataHub lineage collector via SQLAlchemy and boto3 event hooks"
 readme = "README.md"
 license = { text = "MIT" }
@@ -51,10 +51,15 @@ boto3 = [
 sqlalchemy = [
     "SQLAlchemy>=1.4.0",
 ]
+# s3fs 훅 사용 환경
+s3fs = [
+    "s3fs>=2022.1.0",
+]
 # 전체 설치
 all = [
     "boto3>=1.26.0",
     "SQLAlchemy>=1.4.0",
+    "s3fs>=2022.1.0",
 ]
 dev = [
     "pytest>=7.0",

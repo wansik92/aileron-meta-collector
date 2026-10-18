@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.28] - 2026-10-19
+
+### Added
+- `install_s3fs_hooks()` 추가 — s3fs `copy`/`mv` 작업 자동 lineage 수집
+  - monkey-patch 방식으로 `S3FileSystem.copy`, `S3FileSystem.mv` 래핑
+  - src URN → input, dst URN → output 자동 등록 및 emit
+  - s3fs 미설치 시 경고 로그만 출력하고 안전하게 skip
+- `s3fs>=2022.1.0` optional dependency 추가 (`[s3fs]`, `[all]` extra)
+- `install_all_hooks()`에 `install_s3fs_hooks()` 포함
+
+---
+
 ## [0.1.27] - 2026-10-19
 
 ### Changed
