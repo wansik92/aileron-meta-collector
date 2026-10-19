@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.31] - 2026-10-19
+
+### Changed
+- `certifi` explicit dependency 제거 — requests transitive dependency로 자동 설치됨
+
+---
+
 ## [0.1.30] - 2026-10-19
 
 ### Changed
