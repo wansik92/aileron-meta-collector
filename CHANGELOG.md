@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.32] - 2026-10-20
+
+### Changed
+- `requests` 의존성 완전 제거 — Python 내장 `urllib` / `http.client`로 교체
+  - `certifi` transitive dependency 제거됨
+  - connect/read timeout 분리: `socket.create_connection(timeout=connect)` → `sock.settimeout(read)`
+  - retry + exponential backoff 직접 구현: backoff 0.3s × 2^attempt (500/502/503/504 및 연결 오류)
+
+---
+
 ## [0.1.31] - 2026-10-19
 
 ### Changed

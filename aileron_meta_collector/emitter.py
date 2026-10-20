@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import atexit
+import http.client
 import json
 import logging
+import socket
+import ssl
 import time
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
-
-try:
-    import requests as _requests
-    _REQUESTS_AVAILABLE = True
-except ImportError:
-    _REQUESTS_AVAILABLE = False
 
 from .config import (
     get_env, get_gms_url, is_silent_fail, get_connect_timeout_sec, get_retry_max_times, get_cooldown_sec,
@@ -30,9 +28,10 @@ _executor = ThreadPoolExecutor(max_workers=_EMIT_MAX_WORKERS, thread_name_prefix
 
 atexit.register(lambda: _executor.shutdown(wait=True, cancel_futures=False))
 
-_session: "_requests.Session | None" = None
 _datahub_reachable: bool = True
 _last_fail_time: float = 0.0
+
+_RETRY_STATUS = frozenset({500, 502, 503, 504})
 
 
 def flush_emit(timeout: float = 30.0) -> None:
@@ -42,43 +41,80 @@ def flush_emit(timeout: float = 30.0) -> None:
         f.result(timeout=timeout)
 
 
-def _get_session() -> "_requests.Session":
-    global _session
-    if not _REQUESTS_AVAILABLE:
-        raise ImportError(
-            "[aileron] requests 패키지가 설치되지 않았습니다. pip install requests"
-        )
-    if _session is None:
-        from urllib3.util.retry import Retry
-        from requests.adapters import HTTPAdapter
-        retry = Retry(
-            total=get_retry_max_times(),
-            backoff_factor=0.3,
-            status_forcelist=[500, 502, 503, 504],
-            allowed_methods=["POST"],
-        )
-        _session = _requests.Session()
-        _session.headers.update({"Content-Type": "application/json"})
-        _session.mount("http://", HTTPAdapter(max_retries=retry))
-        _session.mount("https://", HTTPAdapter(max_retries=retry))
-    return _session
+def _http_post(url: str, body: bytes, connect_timeout: float, read_timeout: float) -> int:
+    """connect/read timeout을 분리하여 HTTP POST를 수행합니다."""
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname
+    port = parsed.port
+    is_https = parsed.scheme == "https"
+    effective_port = port or (443 if is_https else 80)
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+
+    # connect_timeout으로 TCP 연결 후, read_timeout으로 전환
+    raw_sock = socket.create_connection((host, effective_port), timeout=connect_timeout)
+    raw_sock.settimeout(read_timeout)
+
+    if is_https:
+        ctx = ssl.create_default_context()
+        raw_sock = ctx.wrap_socket(raw_sock, server_hostname=host)
+        conn = http.client.HTTPSConnection(host, effective_port)
+    else:
+        conn = http.client.HTTPConnection(host, effective_port)
+
+    conn.sock = raw_sock
+    try:
+        conn.request("POST", path, body=body, headers={
+            "Content-Type": "application/json",
+            "Content-Length": str(len(body)),
+        })
+        resp = conn.getresponse()
+        resp.read()
+        return resp.status
+    finally:
+        conn.close()
 
 
 def _ingest(entity_urn: str, entity_type: str, aspect_name: str, aspect_value: dict | list, change_type: str = CT_UPSERT) -> None:
-    session = _get_session()
-    proposal = {
-        "entityType": entity_type,
-        "entityUrn": entity_urn,
-        "aspectName": aspect_name,
-        "changeType": change_type,
-        "aspect": {
-            "contentType": "application/json",
-            "value": json.dumps(aspect_value),
-        },
-    }
     url = f"{get_gms_url()}/aspects?action=ingestProposal"
-    resp = session.post(url, json={"proposal": proposal}, timeout=(get_connect_timeout_sec(), 30))
-    resp.raise_for_status()
+    body = json.dumps({
+        "proposal": {
+            "entityType": entity_type,
+            "entityUrn": entity_urn,
+            "aspectName": aspect_name,
+            "changeType": change_type,
+            "aspect": {
+                "contentType": "application/json",
+                "value": json.dumps(aspect_value),
+            },
+        }
+    }).encode("utf-8")
+
+    connect_timeout = get_connect_timeout_sec()
+    retry_max = get_retry_max_times()
+    last_exc: Exception | None = None
+
+    for attempt in range(retry_max + 1):
+        if attempt > 0:
+            time.sleep(0.3 * (2 ** (attempt - 1)))  # backoff: 0.3s, 0.6s, 1.2s, ...
+        try:
+            status = _http_post(url, body, connect_timeout, 30)
+            if status >= 400:
+                exc = RuntimeError(f"[aileron] HTTP {status}")
+                if status in _RETRY_STATUS and attempt < retry_max:
+                    last_exc = exc
+                    continue
+                raise exc
+            return
+        except (socket.timeout, ConnectionRefusedError, OSError) as e:
+            last_exc = e
+            if attempt < retry_max:
+                continue
+            raise
+
+    if last_exc:
+        raise last_exc
 
 
 def _should_skip() -> bool:
