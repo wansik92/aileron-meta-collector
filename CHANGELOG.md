@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.35] - 2026-10-21
+
+### Fixed
+- `DataJobInfo.type` 필드를 Avro union 인코딩 형식으로 수정: `"PYTHON"` → `{"string": "PYTHON"}`
+  - plain string 전달 시 422 오류, 필드 제거 시 required 필드 누락 오류 → union discriminator 형식으로 해결
+
+---
+
+## [0.1.34] - 2026-10-21
+
+### Changed
+- `sqlparse` 최소 버전 `>=0.4.0` → `>=0.6.0` 상향 (CVE-2024-4340 ReDoS 취약점 수정 버전)
+- `requires-python` `>=3.9` → `>=3.10` 상향 (sqlparse 0.6.0 요구사항)
+
+---
+
+## [0.1.33] - 2026-10-21
+
+### Fixed
+- `DataJobInfo` aspect에서 `type: "PYTHON"` 필드 제거
+  - DataHub GMS 422 오류 수정: `type` 필드는 Avro union 타입으로 plain string 전달 시 validation 실패
+  - lineage 수집에 필수 필드가 아니므로 제거로 해결
+
+---
+
 ## [0.1.32] - 2026-10-20
 
 ### Changed

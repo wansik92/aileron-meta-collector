@@ -70,7 +70,9 @@ def _http_post(url: str, body: bytes, connect_timeout: float, read_timeout: floa
             "Content-Length": str(len(body)),
         })
         resp = conn.getresponse()
-        resp.read()
+        resp_body = resp.read()
+        if resp.status >= 400:
+            raise RuntimeError(f"[aileron] HTTP {resp.status}: {resp_body[:300].decode('utf-8', errors='replace')}")
         return resp.status
     finally:
         conn.close()
@@ -99,14 +101,14 @@ def _ingest(entity_urn: str, entity_type: str, aspect_name: str, aspect_value: d
         if attempt > 0:
             time.sleep(0.3 * (2 ** (attempt - 1)))  # backoff: 0.3s, 0.6s, 1.2s, ...
         try:
-            status = _http_post(url, body, connect_timeout, 30)
-            if status >= 400:
-                exc = RuntimeError(f"[aileron] HTTP {status}")
-                if status in _RETRY_STATUS and attempt < retry_max:
-                    last_exc = exc
-                    continue
-                raise exc
+            _http_post(url, body, connect_timeout, 30)
             return
+        except RuntimeError as e:
+            # HTTP 4xx/5xx — 5xx만 retry
+            if any(f"HTTP {s}" in str(e) for s in _RETRY_STATUS) and attempt < retry_max:
+                last_exc = e
+                continue
+            raise
         except (socket.timeout, ConnectionRefusedError, OSError) as e:
             last_exc = e
             if attempt < retry_max:
@@ -247,7 +249,7 @@ def _emit_datajob(job: JobContext, env: str) -> None:
         aspect: dict = {
             "name": job.job_id,
             "flowUrn": _flow_urn(job, env),
-            "type": "PYTHON",
+            "type": {"string": "PYTHON"},
         }
         if job.description:
             aspect["description"] = job.description
